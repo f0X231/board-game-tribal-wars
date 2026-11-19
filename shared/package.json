@@ -5,7 +5,8 @@
   "main": "gameEngine.ts",
   "scripts": {
     "test": "npx tsx gameEngine.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "simulate": "npx tsx simulateMatch.ts"
   },
   "keywords": [],
   "author": "",

@@ -13,6 +13,7 @@
   - [x] Atomic turn execution (Move -> Leave permanent fire trail -> Shoot fire arrow)
   - [x] Player elimination & last-player-standing win condition
 - [x] Write unit tests to verify edge cases (e.g., player can move but has no valid shot)
+- [x] Full-match simulation (`/shared/simulateMatch.ts`): 50 random matches across all 9 board/player configs + 4 critical edge cases + ASCII replay — all passing
 
 ## Phase 2: Local Playable Board UI (`/client`)
 - [ ] Build Match Setup Lobby (select board size, 2-4 players, pieces per player)
@@ -37,7 +38,7 @@
 ---
 
 ## Current Focus
-- **Completed:** `/shared/gameEngine.ts` + `/shared/gameEngine.test.ts` (23 tests passing via `tsx`, `tsc --noEmit` clean).
+- **Completed:** `/shared/gameEngine.ts` + `/shared/gameEngine.test.ts` (23 tests passing via `tsx`, `tsc --noEmit` clean) + `/shared/simulateMatch.ts` (50/50 matches, 1,573 turns invariant-checked, 4/4 edge cases). Phase 1 verified; no engine bugs found.
 - **Next Immediate Task:** Phase 2 — Build Match Setup Lobby in `/client` (`nextjs-board-ui` skill).
 
 ## Decisions & Notes Log
@@ -45,3 +46,4 @@
 - **2026-11-19:** Core engine implemented. Public API: `createGame(config, random?)`, `createStateFromBoard`, `getValidActions`, `validateAction`/`isValidAction`, `applyAction` (throws `GameRuleError`), `tryApplyAction`, `hasValidAction`. `Math.random` is used only in `createGame` (injectable RNG for reproducible setups); initial placement is random over the whole board and retried until every player has a legal turn.
 - **2026-11-19:** Elimination semantics: after each turn, every *opponent* of the mover who cannot complete move+shot is eliminated (fire is permanent and vacated squares become fire, so "stuck" is permanent; this matches "eliminated at start of their turn"). The mover is evaluated at their own next turn, so a mover who traps everyone else wins even if they are now stuck too (no draws).
 - **2026-11-19:** `shared/package.json` switched to `"type": "module"` (required by the tsconfig's `verbatimModuleSyntax` + `nodenext`). Relative imports in `/shared` use `.js` extensions. Tests run with `npm test` in `/shared` (`npx tsx`); `tsx` is not a dependency of `/shared` (it is already in `/server` devDependencies).
+- **2026-11-19:** Phase 1 verification: `npm run simulate` in `/shared` runs seeded (reproducible) matches and checks per-turn invariants (fire +2/turn, fire never disappears, piece counts constant, eliminated players truly stuck, current player always has a legal action). No engine changes were required.
