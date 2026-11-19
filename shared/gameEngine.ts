@@ -29,17 +29,29 @@ export interface MoveAction {
   readonly shoot: Position;
 }
 
+/** Whether the match is still running (`PLAYING`) or has a result (`FINISHED`). */
 export type GameStatus = 'PLAYING' | 'FINISHED';
+/** `PLACEMENT` = snake-draft totem deployment; `PLAYING` = battle turns (move -> trail -> arrow). */
+export type GamePhase = 'PLACEMENT' | 'PLAYING';
+/** `MANUAL` = players draft their totems one at a time; `RANDOM` = the draft is auto-completed randomly. */
+export type PlacementMode = 'MANUAL' | 'RANDOM';
 
 export interface GameConfig {
   readonly boardSize: BoardSize;
   readonly playerCount: PlayerCount;
   readonly piecesPerPlayer: number;
+  /** Defaults to `'MANUAL'`. */
+  readonly placementMode?: PlacementMode | undefined;
 }
 
 export interface GameState {
   readonly boardSize: BoardSize;
   readonly piecesPerPlayer: number;
+  readonly phase: GamePhase;
+  /** Full snake-draft sequence (one entry per totem). Empty for states built from a board. */
+  readonly placementOrder: ReadonlyArray<PlayerId>;
+  /** Index into `placementOrder` of the next totem to place (=== length when the draft is done). */
+  readonly placementIndex: number;
   readonly board: Board;
   /** All players in turn order, including eliminated ones. */
   readonly players: ReadonlyArray<PlayerId>;
@@ -204,6 +216,7 @@ function boardAfterMove(board: Board, from: Position, to: Position, player: Play
 
 /** Every legal complete turn (move + shot) available to `player`. */
 export function getValidActions(state: GameState, player: PlayerId = state.currentPlayer): MoveAction[] {
+  if (state.phase !== 'PLAYING') return [];
   return getValidActionsOnBoard(state.board, player);
 }
 
@@ -237,6 +250,7 @@ export function hasValidAction(board: Board, player: PlayerId): boolean {
 /** Returns `null` if the action is legal for the current player, otherwise the reason. */
 export function validateAction(state: GameState, action: MoveAction): string | null {
   if (state.status !== 'PLAYING') return 'The match is already finished.';
+  if (state.phase !== 'PLAYING') return 'Totems are still being placed (snake draft in progress).';
   const { board, currentPlayer } = state;
   const { from, to, shoot } = action;
 
@@ -335,12 +349,110 @@ export function tryApplyAction(
 }
 
 // ---------------------------------------------------------------------------
+// Snake-draft placement
+// ---------------------------------------------------------------------------
+
+/**
+ * Snake-draft order: forward on even rounds, reversed on odd rounds.
+ * e.g. 3 players x 2 pieces -> P1 P2 P3 P3 P2 P1.
+ */
+export function getSnakeDraftOrder(players: ReadonlyArray<PlayerId>, piecesPerPlayer: number): PlayerId[] {
+  const order: PlayerId[] = [];
+  for (let round = 0; round < piecesPerPlayer; round++) {
+    order.push(...(round % 2 === 0 ? players : [...players].reverse()));
+  }
+  return order;
+}
+
+/** Totems `player` still has to place in the draft. */
+export function getPiecesToPlace(state: GameState, player: PlayerId): number {
+  return state.placementOrder.slice(state.placementIndex).filter((p) => p === player).length;
+}
+
+/** Every square where the current drafter may deploy a totem (all `EMPTY` squares). */
+export function getValidPlacements(state: GameState): Position[] {
+  if (state.status !== 'PLAYING' || state.phase !== 'PLACEMENT') return [];
+  const result: Position[] = [];
+  state.board.forEach((row, r) => row.forEach((cell, c) => {
+    if (cell === 'EMPTY') result.push({ row: r, col: c });
+  }));
+  return result;
+}
+
+/** Returns `null` if the current drafter may place a totem at `pos`, otherwise the reason. */
+export function validatePlacement(state: GameState, pos: Position): string | null {
+  if (state.status !== 'PLAYING') return 'The match is already finished.';
+  if (state.phase !== 'PLACEMENT') return 'The placement phase is over.';
+  if (!isInside(state.board, pos)) return 'Placement square is outside the board.';
+  if (getCell(state.board, pos) !== 'EMPTY') return 'Placement square is not empty.';
+  return null;
+}
+
+/**
+ * Battle-start bookkeeping shared by the end of the draft and `createStateFromBoard`:
+ * players with no complete turn are eliminated, and the turn goes to the first able
+ * player starting from `firstMover` (clockwise).
+ */
+function startBattle(
+  board: Board,
+  players: ReadonlyArray<PlayerId>,
+  firstMover: PlayerId,
+): Pick<GameState, 'activePlayers' | 'eliminated' | 'currentPlayer' | 'status' | 'winner'> {
+  const active = players.filter((p) => hasValidAction(board, p));
+  const eliminated = players.filter((p) => !active.includes(p));
+  if (active.length <= 1) {
+    const winner = active[0] ?? null;
+    return { activePlayers: active, eliminated, currentPlayer: winner ?? firstMover, status: 'FINISHED', winner };
+  }
+  const start = players.indexOf(firstMover);
+  let current = firstMover;
+  for (let i = 0; i < players.length; i++) {
+    const p = players[(start + i) % players.length]!;
+    if (active.includes(p)) {
+      current = p;
+      break;
+    }
+  }
+  return { activePlayers: active, eliminated, currentPlayer: current, status: 'PLAYING', winner: null };
+}
+
+/**
+ * Deploys one totem for the current drafter. When the last totem is placed the
+ * match switches to `PLAYING`, and the player who placed that last totem moves
+ * first (then clockwise). Throws `GameRuleError` on an illegal placement.
+ */
+export function placePiece(state: GameState, pos: Position): GameState {
+  const error = validatePlacement(state, pos);
+  if (error !== null) throw new GameRuleError(error);
+
+  const placer = state.currentPlayer;
+  const board = cloneBoard(state.board);
+  board[pos.row]![pos.col] = placer;
+  const placementIndex = state.placementIndex + 1;
+
+  if (placementIndex < state.placementOrder.length) {
+    return { ...state, board, placementIndex, currentPlayer: state.placementOrder[placementIndex]! };
+  }
+  return { ...state, board, placementIndex, phase: 'PLAYING', ...startBattle(board, state.players, placer) };
+}
+
+/** Non-throwing variant of `placePiece`. */
+export function tryPlacePiece(
+  state: GameState,
+  pos: Position,
+): { ok: true; state: GameState } | { ok: false; error: string } {
+  const error = validatePlacement(state, pos);
+  if (error !== null) return { ok: false, error };
+  return { ok: true, state: placePiece(state, pos) };
+}
+
+// ---------------------------------------------------------------------------
 // Game creation
 // ---------------------------------------------------------------------------
 
 /**
- * Builds a state from an explicit board (useful for tests, replays and
- * scenario setup). Players who are already stuck are eliminated immediately,
+ * Builds a battle-phase state from an explicit board (useful for tests, replays
+ * and scenario setup). Players who are already stuck are eliminated immediately,
  * and the turn passes to the first able player starting from `currentPlayer`.
  */
 export function createStateFromBoard(
@@ -358,46 +470,29 @@ export function createStateFromBoard(
   }
   if (!players.includes(currentPlayer)) throw new GameRuleError(`${currentPlayer} is not in this match.`);
 
-  const active = players.filter((p) => hasValidAction(board, p));
-  const eliminated = players.filter((p) => !active.includes(p));
-  let status: GameStatus = 'PLAYING';
-  let winner: PlayerId | null = null;
-  let current = currentPlayer;
-
-  if (active.length <= 1) {
-    status = 'FINISHED';
-    winner = active[0] ?? null;
-    current = winner ?? currentPlayer;
-  } else {
-    const start = players.indexOf(currentPlayer);
-    for (let i = 0; i < players.length; i++) {
-      const p = players[(start + i) % players.length]!;
-      if (active.includes(p)) {
-        current = p;
-        break;
-      }
-    }
-  }
-
   return {
     boardSize: size,
     piecesPerPlayer,
+    phase: 'PLAYING',
+    placementOrder: [],
+    placementIndex: 0,
     board: cloneBoard(board),
     players: [...players],
-    activePlayers: active,
-    eliminated,
-    currentPlayer: current,
-    status,
-    winner,
+    ...startBattle(board, players, currentPlayer),
     turnNumber: 0,
     lastAction: null,
   };
 }
 
 /**
- * Creates a new match with pieces placed at random distinct squares.
+ * Creates a new match.
+ * - `MANUAL` (default): empty board in the `PLACEMENT` phase; call `placePiece`
+ *   for each totem in snake-draft order.
+ * - `RANDOM`: the snake draft is auto-completed on random empty squares (retried
+ *   until every player has a legal turn), so the first-mover rule still applies.
+ *
  * `random` defaults to `Math.random` and may be injected for reproducible setups.
- * Placement is retried until every player has at least one complete legal turn.
+ * This is the only place randomness is used.
  */
 export function createGame(config: GameConfig, random: () => number = Math.random): GameState {
   const errors = validateConfig(config);
@@ -405,29 +500,34 @@ export function createGame(config: GameConfig, random: () => number = Math.rando
 
   const { boardSize, playerCount, piecesPerPlayer } = config;
   const players = ALL_PLAYERS.slice(0, playerCount);
+  const placementOrder = getSnakeDraftOrder(players, piecesPerPlayer);
+
+  const draft: GameState = {
+    boardSize,
+    piecesPerPlayer,
+    phase: 'PLACEMENT',
+    placementOrder,
+    placementIndex: 0,
+    board: createEmptyBoard(boardSize),
+    players,
+    activePlayers: players,
+    eliminated: [],
+    currentPlayer: placementOrder[0]!,
+    status: 'PLAYING',
+    winner: null,
+    turnNumber: 0,
+    lastAction: null,
+  };
+  if ((config.placementMode ?? 'MANUAL') === 'MANUAL') return draft;
+
   const MAX_ATTEMPTS = 100;
-
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-    const squares: Position[] = [];
-    for (let r = 0; r < boardSize; r++) for (let c = 0; c < boardSize; c++) squares.push({ row: r, col: c });
-    // Fisher-Yates shuffle
-    for (let i = squares.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [squares[i], squares[j]] = [squares[j]!, squares[i]!];
+    let state = draft;
+    while (state.phase === 'PLACEMENT') {
+      const options = getValidPlacements(state);
+      state = placePiece(state, options[Math.floor(random() * options.length)]!);
     }
-
-    const board = createEmptyBoard(boardSize);
-    let k = 0;
-    for (const player of players) {
-      for (let n = 0; n < piecesPerPlayer; n++) {
-        const sq = squares[k++]!;
-        board[sq.row]![sq.col] = player;
-      }
-    }
-
-    if (players.every((p) => hasValidAction(board, p))) {
-      return createStateFromBoard(board, players, players[0], piecesPerPlayer);
-    }
+    if (state.status === 'PLAYING' && state.activePlayers.length === playerCount) return state;
   }
   throw new GameRuleError('Could not generate a playable starting position.');
 }

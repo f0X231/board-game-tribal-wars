@@ -10,6 +10,11 @@ import {
   getQueenReachable,
   getValidActions,
   getValidActionsOnBoard,
+  getPiecesToPlace,
+  getSnakeDraftOrder,
+  getValidPlacements,
+  placePiece,
+  type Position,
   GameRuleError,
   hasValidAction,
   isValidAction,
@@ -154,7 +159,7 @@ test('createGame places the right pieces for every size/player combination', () 
     const { min, max } = getPieceLimits(boardSize);
     for (const playerCount of [2, 3, 4] as const) {
       for (const pieces of [min, max]) {
-        const s = createGame({ boardSize, playerCount, piecesPerPlayer: pieces }, rng);
+        const s = createGame({ boardSize, playerCount, piecesPerPlayer: pieces, placementMode: 'RANDOM' }, rng);
         assertEqual(s.board.length, boardSize, 'rows');
         assert(s.board.every((r) => r.length === boardSize), 'cols');
         assertEqual(s.players.length, playerCount, 'player count');
@@ -164,15 +169,17 @@ test('createGame places the right pieces for every size/player combination', () 
         }
         assertEqual(s.board.flat().filter((c) => c === 'FIRE').length, 0, 'no fire at start');
         assertEqual(s.status, 'PLAYING', 'status');
-        assertEqual(s.currentPlayer, 'P1', 'P1 starts');
+        assertEqual(s.phase, 'PLAYING', 'random spawn skips to battle');
+        const lastPlacer = s.placementOrder[s.placementOrder.length - 1]!;
+        assertEqual(s.currentPlayer, lastPlacer, 'last drafter moves first');
       }
     }
   }
 });
 
 test('createGame is reproducible with the same seed', () => {
-  const a = createGame({ boardSize: 10, playerCount: 3, piecesPerPlayer: 5 }, seeded(7));
-  const b = createGame({ boardSize: 10, playerCount: 3, piecesPerPlayer: 5 }, seeded(7));
+  const a = createGame({ boardSize: 10, playerCount: 3, piecesPerPlayer: 5, placementMode: 'RANDOM' }, seeded(7));
+  const b = createGame({ boardSize: 10, playerCount: 3, piecesPerPlayer: 5, placementMode: 'RANDOM' }, seeded(7));
   assertEqual(a.board, b.board, 'same board');
 });
 
@@ -289,7 +296,7 @@ test('illegal actions throw / tryApplyAction returns error', () => {
 });
 
 test('every action from getValidActions is accepted by validateAction', () => {
-  const s = createGame({ boardSize: 6, playerCount: 3, piecesPerPlayer: 3 }, seeded(3));
+  const s = createGame({ boardSize: 6, playerCount: 3, piecesPerPlayer: 3, placementMode: 'RANDOM' }, seeded(3));
   const actions = getValidActions(s);
   assert(actions.length > 0, 'expected actions');
   for (const a of actions) assert(validateAction(s, a) === null, `rejected generated action ${JSON.stringify(a)}`);
@@ -386,7 +393,7 @@ test('mover who traps everyone else wins even if self is also stuck', () => {
 
 test('4-player full random playthrough always terminates with a single winner', () => {
   for (const [size, pieces] of [[6, 2], [6, 4], [10, 4], [12, 6]] as const) {
-    let s: GameState = createGame({ boardSize: size, playerCount: 4, piecesPerPlayer: pieces }, seeded(size * 100 + pieces));
+    let s: GameState = createGame({ boardSize: size, playerCount: 4, piecesPerPlayer: pieces, placementMode: 'RANDOM' }, seeded(size * 100 + pieces));
     const rng = seeded(size + pieces);
     let guard = 0;
     while (s.status === 'PLAYING') {
@@ -404,6 +411,112 @@ test('4-player full random playthrough always terminates with a single winner', 
       assertEqual(s.board.flat().filter((c) => c === p).length, pieces, `${p} keeps all pieces`);
     }
   }
+});
+
+console.log('\nSnake draft placement');
+
+/** Places totems for the whole draft at the given squares (in draft order). */
+function draftAll(state: GameState, squares: Position[]): GameState {
+  let s = state;
+  for (const sq of squares) s = placePiece(s, sq);
+  return s;
+}
+
+test('createGame defaults to MANUAL: empty board in PLACEMENT phase', () => {
+  const s = createGame({ boardSize: 6, playerCount: 3, piecesPerPlayer: 2 });
+  assertEqual(s.phase, 'PLACEMENT', 'phase');
+  assertEqual(s.status, 'PLAYING', 'status');
+  assertEqual(s.board.flat().every((c) => c === 'EMPTY'), true, 'empty board');
+  assertEqual(s.currentPlayer, 'P1', 'P1 drafts first');
+  assertEqual(getValidPlacements(s).length, 36, 'every square available');
+  assertEqual(getValidActions(s).length, 0, 'no battle actions during placement');
+});
+
+test('snake draft order for 2, 3 and 4 players', () => {
+  assertEqual(getSnakeDraftOrder(['P1', 'P2'], 3), ['P1', 'P2', 'P2', 'P1', 'P1', 'P2'], '2p x3');
+  assertEqual(getSnakeDraftOrder(['P1', 'P2', 'P3'], 2), ['P1', 'P2', 'P3', 'P3', 'P2', 'P1'], '3p x2');
+  assertEqual(
+    getSnakeDraftOrder(['P1', 'P2', 'P3', 'P4'], 3),
+    ['P1', 'P2', 'P3', 'P4', 'P4', 'P3', 'P2', 'P1', 'P1', 'P2', 'P3', 'P4'],
+    '4p x3',
+  );
+});
+
+test('placePiece follows the snake order and tracks pieces left to place', () => {
+  let s = createGame({ boardSize: 6, playerCount: 3, piecesPerPlayer: 2 });
+  const seen: string[] = [];
+  const squares = [at(0, 0), at(0, 5), at(5, 0), at(5, 5), at(2, 2), at(3, 3)];
+  for (const sq of squares) {
+    seen.push(s.currentPlayer);
+    s = placePiece(s, sq);
+    if (s.phase === 'PLACEMENT') assertEqual(getPiecesToPlace(s, 'P1') + getPiecesToPlace(s, 'P2') + getPiecesToPlace(s, 'P3'), 6 - seen.length, 'remaining');
+  }
+  assertEqual(seen, ['P1', 'P2', 'P3', 'P3', 'P2', 'P1'], 'draft sequence');
+  assertEqual(s.board[0]![0], 'P1', 'P1 first totem');
+  assertEqual(s.board[5]![5], 'P3', 'P3 second totem');
+  assertEqual(s.board[3]![3], 'P1', 'P1 last totem');
+  assertEqual(s.phase, 'PLAYING', 'switched to battle');
+});
+
+test('first mover = player who placed the very last totem, then clockwise', () => {
+  // 3 players x 2 pieces -> last totem is P1's.
+  let s = draftAll(createGame({ boardSize: 6, playerCount: 3, piecesPerPlayer: 2 }), [
+    at(0, 0), at(0, 5), at(5, 0), at(5, 5), at(2, 2), at(3, 3),
+  ]);
+  assertEqual(s.currentPlayer, 'P1', 'even rounds -> P1 moves first');
+  // 3 players x 3 pieces -> last totem is P3's.
+  s = draftAll(createGame({ boardSize: 6, playerCount: 3, piecesPerPlayer: 3 }), [
+    at(0, 0), at(0, 5), at(5, 0), at(5, 5), at(2, 2), at(3, 3), at(1, 4), at(4, 1), at(2, 4),
+  ]);
+  assertEqual(s.placementOrder[8], 'P3', 'P3 placed last');
+  assertEqual(s.currentPlayer, 'P3', 'odd rounds -> last player moves first');
+  const next = applyAction(s, getValidActions(s)[0]!);
+  assertEqual(next.currentPlayer, 'P1', 'clockwise: P3 -> P1');
+  const after = applyAction(next, getValidActions(next)[0]!);
+  assertEqual(after.currentPlayer, 'P2', 'clockwise: P1 -> P2');
+});
+
+test('illegal placements are rejected', () => {
+  const s0 = createGame({ boardSize: 6, playerCount: 2, piecesPerPlayer: 2 });
+  const s1 = placePiece(s0, at(1, 1));
+  assertThrows(() => placePiece(s1, at(1, 1)), 'occupied square');
+  assertThrows(() => placePiece(s1, at(6, 0)), 'outside the board');
+  assertThrows(() => placePiece(s1, at(-1, 2)), 'negative coordinate');
+  assertThrows(() => applyAction(s1, act([1, 1], [2, 2], [3, 3])), 'battle action during placement');
+  const done = draftAll(s1, [at(0, 5), at(5, 0), at(5, 5)]);
+  assertEqual(done.phase, 'PLAYING', 'draft finished');
+  assertThrows(() => placePiece(done, at(3, 3)), 'placing after the draft');
+});
+
+test('placePiece is immutable', () => {
+  const s0 = createGame({ boardSize: 6, playerCount: 2, piecesPerPlayer: 2 });
+  const snapshot = JSON.stringify(s0);
+  placePiece(s0, at(2, 2));
+  assertEqual(JSON.stringify(s0), snapshot, 'state mutated');
+});
+
+test('a totem boxed in during the draft is eliminated when battle starts', () => {
+  // 4 players x 2: P1's totems at (0,0) and (0,1) get walled in by opponents.
+  const s = draftAll(createGame({ boardSize: 6, playerCount: 4, piecesPerPlayer: 2 }), [
+    at(0, 0), // P1
+    at(1, 0), // P2
+    at(1, 1), // P3
+    at(1, 2), // P4
+    at(0, 2), // P4
+    at(5, 5), // P3
+    at(5, 0), // P2
+    at(0, 1), // P1  (last totem -> would move first, but has no legal turn)
+  ]);
+  assertEqual(s.phase, 'PLAYING', 'battle started');
+  assertEqual(s.eliminated, ['P1'], 'P1 eliminated at battle start');
+  assertEqual(s.currentPlayer, 'P2', 'turn passes clockwise to P2');
+});
+
+test('RANDOM placement mode completes the snake draft', () => {
+  const s = createGame({ boardSize: 12, playerCount: 4, piecesPerPlayer: 6, placementMode: 'RANDOM' }, seeded(11));
+  assertEqual(s.phase, 'PLAYING', 'phase');
+  assertEqual(s.placementIndex, 24, 'all 24 totems placed');
+  assertEqual(s.currentPlayer, 'P1', '4p x6 (even rounds) -> P1 placed last');
 });
 
 // ---------------------------------------------------------------------------

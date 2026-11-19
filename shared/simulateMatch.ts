@@ -192,7 +192,7 @@ edge('EC3 Player who can move to an adjacent square but cannot shoot from it IS 
 });
 
 edge('EC4 applyAction never mutates the previous GameState', () => {
-  const s0 = createGame({ boardSize: 10, playerCount: 4, piecesPerPlayer: 5 }, seeded(99));
+  const s0 = createGame({ boardSize: 10, playerCount: 4, piecesPerPlayer: 5, placementMode: 'RANDOM' }, seeded(99));
   const snapshot = JSON.stringify(s0);
   deepFreeze(s0); // any write to s0 (or its nested board rows) would throw in strict-mode ESM
   let s = s0;
@@ -270,7 +270,7 @@ function playMatch(
 ): MatchResult {
   const setupRng = seeded(seed);
   const moveRng = seeded(seed * 7919 + 1);
-  let s = createGame({ boardSize, playerCount, piecesPerPlayer: pieces }, setupRng);
+  let s = createGame({ boardSize, playerCount, piecesPerPlayer: pieces, placementMode: 'RANDOM' }, setupRng);
   const base = { boardSize, playerCount, pieces, seed };
   try {
     check(s.status === 'PLAYING' && s.activePlayers.length === playerCount, 'bad initial state');
