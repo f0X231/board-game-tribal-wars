@@ -43,7 +43,7 @@
 ## Current Focus
 - **Completed:** Phase 2 — local pass-and-play board UI with snake-draft placement (`/client`), engine upgraded (`/shared`: 31 unit tests + 50-match simulation passing). `tsc --noEmit` clean in `/shared` and `/client`; `npm run build` and `npm run lint` pass in `/client`.
 - **Next Immediate Task:** Phase 3 — Express + TypeScript server entry point and `.env.example` in `/server` (`ai-arena` skill).
-- **Known follow-up:** `.claude/skills/game-engine/SKILL.md` still describes the pre-draft rules (no `PLACEMENT` phase); update it when convenient.
+- **Done:** `game-engine` and `nextjs-board-ui` skills updated for the Snake Draft `PLACEMENT` phase and the 4 Aztec tribe themes.
 
 ## Decisions & Notes Log
 - **2026-11-19:** Project initialized as **Tribal Wars**. Decided on Full-Stack TypeScript (`Next.js` client, `Node.js/Express/Socket.IO` server, pure TS `shared` engine) and OpenAI-compatible free LLM APIs (OpenRouter/Groq).
