@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { getPiecesToPlace, getPlayerPieces, hasValidAction, type GameState } from "@shared/gameEngine";
 import type { LogEntry, TurnStep } from "@/lib/useLocalMatch";
+import { controllerLabel, type SlotController } from "@/lib/matchConfig";
+import type { PlayerId } from "@shared/gameEngine";
 import { TRIBES } from "@/lib/tribes";
 import { Totem } from "./art";
 
@@ -12,12 +14,33 @@ const STEP_HELP: Record<TurnStep["step"], { title: string; text: string }> = {
   SELECT_SHOOT: { title: "Step 3 · Loose the fire arrow", text: "Your old square is now burning. Choose a fiery target to shoot." },
 };
 
-export function PhaseBanner({ game, turn, onCancel }: { game: GameState; turn: TurnStep; onCancel: () => void }) {
+export function PhaseBanner({
+  game,
+  turn,
+  onCancel,
+  controller,
+  aiThinking,
+  paused,
+}: {
+  game: GameState;
+  turn: TurnStep;
+  onCancel: () => void;
+  controller: SlotController;
+  aiThinking: boolean;
+  paused: boolean;
+}) {
+  const isAi = controller.type === "ai";
   const finished = game.status === "FINISHED";
   const tribe = TRIBES[finished && game.winner ? game.winner : game.currentPlayer];
   const phaseLabel = finished ? "FINISHED" : game.phase === "PLACEMENT" ? "PLACEMENT" : "BATTLE";
-  const help =
-    game.phase === "PLACEMENT"
+  const help = isAi
+    ? paused
+      ? { title: "AI paused", text: `${controllerLabel(controller)} is waiting. Press "Resume AI" to continue.` }
+      : {
+          title: `${controllerLabel(controller)} is thinking…`,
+          text: game.phase === "PLACEMENT" ? "Choosing where to raise a totem." : "Weighing moves and fire arrows from the engine's legal options.",
+        }
+    : game.phase === "PLACEMENT"
       ? {
           title: `Raise a totem (${game.placementIndex + 1} of ${game.placementOrder.length})`,
           text: "Click any empty square to deploy a totem. Draft order snakes back and forth.",
@@ -42,13 +65,17 @@ export function PhaseBanner({ game, turn, onCancel }: { game: GameState; turn: T
           <p className="font-display mt-1 truncate text-lg font-bold" style={{ color: tribe.accent }}>
             {finished ? (game.winner ? `${tribe.name} wins` : "No survivors") : `${tribe.name}'s turn`}
           </p>
+          {!finished && <p className="truncate text-[11px] text-stone-400">{isAi ? `🤖 ${controllerLabel(controller)}` : "🧑 Human"}</p>}
         </div>
       </div>
       {!finished && (
         <div className="mt-3 border-t border-white/10 pt-3">
-          <p className="font-display text-sm font-bold text-gold">{help.title}</p>
+          <p className="font-display flex items-center gap-2 text-sm font-bold text-gold">
+            {aiThinking && <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gold border-t-transparent" aria-hidden="true" />}
+            {help.title}
+          </p>
           <p className="mt-0.5 text-xs leading-relaxed text-stone-300">{help.text}</p>
-          {turn.step === "SELECT_SHOOT" && (
+          {!isAi && turn.step === "SELECT_SHOOT" && (
             <button
               type="button"
               onClick={onCancel}
@@ -63,7 +90,7 @@ export function PhaseBanner({ game, turn, onCancel }: { game: GameState; turn: T
   );
 }
 
-export function TribeRoster({ game }: { game: GameState }) {
+export function TribeRoster({ game, slots }: { game: GameState; slots: Record<PlayerId, SlotController> }) {
   return (
     <ul className="space-y-2">
       {game.players.map((p) => {
@@ -91,7 +118,9 @@ export function TribeRoster({ game }: { game: GameState }) {
               <p className="font-display truncate text-sm font-bold" style={{ color: t.accent }}>
                 {t.name}
               </p>
-              <p className="text-[11px] text-stone-400">{status}</p>
+              <p className="truncate text-[11px] text-stone-400">
+                {slots[p].type === "ai" ? "🤖" : "🧑"} {controllerLabel(slots[p])} · {status}
+              </p>
             </div>
             {game.phase === "PLACEMENT" && !out && (
               <div className="flex gap-0.5" aria-label={`${toPlace} totems left to place`}>
@@ -138,7 +167,16 @@ export function BattleLog({ log }: { log: LogEntry[] }) {
         Battle Log
       </h2>
       <ol ref={listRef} className="max-h-64 min-h-24 flex-1 space-y-1.5 overflow-y-auto px-3 py-2 text-xs lg:max-h-none" aria-live="polite">
-        {log.map((e) => (
+        {log.map((e) =>
+          e.kind === "ai-reasoning" ? (
+            <li key={e.id} className="ml-4 border-l-2 pl-2 leading-snug" style={{ borderColor: e.player ? TRIBES[e.player].base : "#a8a29e" }}>
+              <span className="mr-1 font-semibold text-stone-400">
+                🤖 {e.model}
+                {e.fallback && <span className="ml-1 rounded bg-orange-900/70 px-1 text-[10px] text-orange-200">fallback</span>}:
+              </span>
+              <span className="italic text-stone-300">“{e.text}”</span>
+            </li>
+          ) : (
           <li key={e.id} className="flex gap-2 leading-snug">
             <span
               className="mt-1 h-2 w-2 shrink-0 rounded-full"
@@ -158,7 +196,8 @@ export function BattleLog({ log }: { log: LogEntry[] }) {
               {e.text}
             </span>
           </li>
-        ))}
+          ),
+        )}
       </ol>
     </div>
   );

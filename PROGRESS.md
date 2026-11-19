@@ -26,11 +26,16 @@
 - [x] Test full local pass-and-play match from start to finish
 
 ## Phase 3: AI Arena & Free Open-Source Models (`/server`)
-- [ ] Set up Express + TypeScript server entry point and `.env.example`
-- [ ] Integrate OpenAI SDK configured for OpenRouter (`:free` models) and Groq
-- [ ] Build anti-hallucination prompt formatter (send `validActions` list to LLM, parse chosen `actionIndex`)
-- [ ] Implement fallback move logic in case of API timeout or malformed response
-- [ ] Build AI vs AI Spectator Mode with configurable turn delay (1s–2.5s) and live reasoning log UI
+- [x] Set up Express + TypeScript server entry point and `.env.example` (`/server/src/index.ts`, ESM, `npm run dev|build|start|test`)
+- [x] Integrate OpenAI SDK configured for OpenRouter (`:free` models) and Groq (overridable model lists via env)
+- [x] Built-in offline bots (`offline:heuristic` mobility/centre bot, `offline:random`) in `/shared/aiBots.ts` — work without API keys
+- [x] Build anti-hallucination prompt formatter (engine-ranked shortlist of legal actions/placements → LLM returns `actionIndex`/`placementIndex`)
+- [x] Both phases supported (`PLACEMENT` snake draft + `PLAYING` battle)
+- [x] Implement fallback move logic (missing key, >10s timeout, invalid JSON, bad index, HTTP error → `offline:heuristic` with `(Fallback)` note; browser-side fallback if server is down)
+- [x] API: `GET /api/models`, `POST /api/ai-turn`, `GET /api/health` with strict `GameState` validation
+- [x] Lobby seat configuration (Human / AI model per tribe) + AI turn speed (0.5s / 1.2s / 2.5s)
+- [x] Build AI vs AI Spectator Mode with turn delay, Pause/Resume AI, and live reasoning log UI
+- [x] Tests: `/server/tests/aiService.test.ts` (17 tests incl. fake LLM provider) + headless-browser E2E (spectator, human vs AI, pause, server-down fallback)
 
 ## Phase 4: Online Multiplayer (`/server` & `/client`)
 - [ ] Implement Socket.IO Room Manager (`create_room`, `join_room`, `start_game`)
@@ -41,9 +46,9 @@
 ---
 
 ## Current Focus
-- **Completed:** Phase 2 — local pass-and-play board UI with snake-draft placement (`/client`), engine upgraded (`/shared`: 31 unit tests + 50-match simulation passing). `tsc --noEmit` clean in `/shared` and `/client`; `npm run build` and `npm run lint` pass in `/client`.
-- **Next Immediate Task:** Phase 3 — Express + TypeScript server entry point and `.env.example` in `/server` (`ai-arena` skill).
-- **Done:** `game-engine` and `nextjs-board-ui` skills updated for the Snake Draft `PLACEMENT` phase and the 4 Aztec tribe themes.
+- **Completed:** Phase 3 — AI Arena. `/server` Express API with offline bots + OpenRouter/Groq LLMs and fallback; `/client` AI seats, spectator pacing, Pause/Resume, reasoning log. `tsc --noEmit` clean in `/shared`, `/server`, `/client`; `npm run build` passes in `/server` and `/client`; tests: shared 31 + simulation 50/50, server 17.
+- **Next Immediate Task:** Phase 4 — Socket.IO room manager (`create_room`, `join_room`, `start_game`) with server-authoritative validation (`multiplayer-sync` skill).
+- **Not yet verified:** real OpenRouter/Groq calls (no API keys on this machine); the LLM path is covered by a fake OpenAI-compatible server in tests. Default free model names may be retired by providers — override with `OPENROUTER_MODELS` / `GROQ_MODELS`.
 
 ## Decisions & Notes Log
 - **2026-11-19:** Project initialized as **Tribal Wars**. Decided on Full-Stack TypeScript (`Next.js` client, `Node.js/Express/Socket.IO` server, pure TS `shared` engine) and OpenAI-compatible free LLM APIs (OpenRouter/Groq).
@@ -54,3 +59,6 @@
 - **2026-11-19:** **Snake Draft placement** added to match the official rulebook. `GameState` gained `phase`, `placementOrder`, `placementIndex`; `createGame` now defaults to `placementMode: 'MANUAL'` (empty board). `status` (`PLAYING`/`FINISHED`) still means "match running vs. over" and is independent of `phase`. If a totem is boxed in by the draft, that player is eliminated as the battle starts and the turn passes clockwise.
 - **2026-11-19:** `/client` imports the engine via the `@shared/*` tsconfig path alias; `next.config.ts` sets `turbopack.root` to the repo root so Turbopack can resolve `../shared`. No new npm dependencies (font: Cinzel via `next/font/google`).
 - **2026-11-19:** UI structure: `useLocalMatch` (reducer: engine state + turn step + battle log) → `MatchScreen` (`Board`, `Hud`, `VictoryModal`); SVG art (totems, fire tokens, torches, spears) lives in `components/art.tsx` with shared gradients in a single hidden `<defs>`.
+- **2026-11-19:** Phase 3 AI Arena. LLMs choose an index from an engine-ranked shortlist (top 20 actions / top 15 placements) because 12x12 boards have thousands of legal actions. Heuristic bots live in `/shared/aiBots.ts` so the server and the browser fallback share them. API contract types live in `/shared/apiTypes.ts`.
+- **2026-11-19:** AI turn pacing is client-side for local matches (`MatchConfig.aiDelayMs`); CLAUDE.md's server-side delay applies to Phase 4 online rooms. Client API base URL: `NEXT_PUBLIC_API_URL` (default `http://localhost:4000`); server CORS: `CLIENT_ORIGIN` (default `http://localhost:3000`).
+- **2026-11-19:** `/server` switched to `"type": "module"`; `tsc` builds with `rootDir: ".."` into `dist/server` + `dist/shared`. Inside `/shared`, cross-file imports use `.ts` extensions (Turbopack can't resolve `.js` → `.ts`), with `rewriteRelativeImportExtensions` in the shared/server tsconfigs and `allowImportingTsExtensions` in the client tsconfig.

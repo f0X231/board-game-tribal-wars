@@ -1,12 +1,12 @@
 "use client";
 
-import type { GameConfig } from "@shared/gameEngine";
+import type { MatchConfig } from "@/lib/matchConfig";
 import { useLocalMatch } from "@/lib/useLocalMatch";
 import { Board } from "./Board";
 import { BattleLog, PhaseBanner, TribeRoster } from "./Hud";
 import { VictoryModal } from "./VictoryModal";
 
-export function MatchScreen({ config, onLobby }: { config: GameConfig; onLobby: () => void }) {
+export function MatchScreen({ config, onLobby }: { config: MatchConfig; onLobby: () => void }) {
   const match = useLocalMatch(config);
   const { game, turn, log } = match;
 
@@ -23,9 +23,30 @@ export function MatchScreen({ config, onLobby }: { config: GameConfig; onLobby: 
             {game.boardSize}×{game.boardSize} · Turn {game.turnNumber}
           </span>
         </div>
-        <PhaseBanner game={game} turn={turn} onCancel={match.cancel} />
-        <TribeRoster game={game} />
+        <PhaseBanner
+          game={game}
+          turn={turn}
+          onCancel={match.cancel}
+          controller={match.currentSlot}
+          aiThinking={match.aiThinking}
+          paused={match.paused}
+        />
+        <TribeRoster game={game} slots={match.config.slots} />
         <BattleLog log={log} />
+        {match.hasAi && game.status === "PLAYING" && (
+          <button
+            type="button"
+            onClick={match.togglePause}
+            aria-pressed={match.paused}
+            className={`font-display rounded-md border-2 px-3 py-2 text-sm font-bold uppercase tracking-widest transition ${
+              match.paused
+                ? "border-emerald-500/70 bg-emerald-900/50 text-emerald-200 hover:bg-emerald-900/70"
+                : "border-gold/50 bg-amber-950/60 text-gold hover:bg-amber-950/80"
+            }`}
+          >
+            {match.paused ? "▶ Resume AI" : "❚❚ Pause AI"}
+          </button>
+        )}
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
