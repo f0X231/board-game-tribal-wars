@@ -8,7 +8,8 @@
     "build": "tsc",
     "start": "node dist/server/src/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx tests/aiService.test.ts"
+    "test": "tsx tests/aiService.test.ts && tsx tests/matches.test.ts",
+    "experiment": "tsx src/runExperiment.ts"
   },
   "keywords": [],
   "author": "",

@@ -37,6 +37,16 @@
 - [x] Build AI vs AI Spectator Mode with turn delay, Pause/Resume AI, and live reasoning log UI
 - [x] Tests: `/server/tests/aiService.test.ts` (17 tests incl. fake LLM provider) + headless-browser E2E (spectator, human vs AI, pause, server-down fallback)
 
+## Phase 3.5: Research Telemetry, Voronoi Analytics & Match Recording
+- [x] Persistent piece ids in `GameState.pieces` (`P1_1`, `P2_3`, ... kept in deployment order, follow moves; `getPieceIdAt`, `assignPieceIds`) — all existing tests unchanged
+- [x] `/shared/telemetry.ts`: Queen-move & King-move Voronoi (multi-source BFS), contested / neutral squares, exclusive safe regions (connected components), active vs trapped pieces, exact legal move-arrow counts, opponents' mobility delta, algebraic notation (`a1`–`l12`), distances/directions, fire coverage, board snapshots
+- [x] Deterministic replay (`replayDecisions`, `rebuildMatchTelemetry`), RANDOM spawn recovery (`spawnDecisions`), fixed-column CSV export (`matchToCsv`, formula-injection safe)
+- [x] `/server/src/matchRecorder.ts` file archive (`server/data/matches/<matchId>.json`, gitignored, never overwrites)
+- [x] API: `POST /api/matches` (server replays decisions and recomputes every metric), `GET /api/matches`, `GET /api/matches/:id/export?format=json|csv`
+- [x] Headless batch runner `npm run experiment -- --models a,b --games N` (seat rotation, seeded RANDOM spawns, rate-limit pause, results table)
+- [x] Client: per-decision `thinkTimeMs`, live telemetry on every placement/turn, auto-submit on victory, Post-Match Analytics + "Export Research JSON" / "Export CSV" in the Victory modal (works offline)
+- [x] Tests: shared 34 + telemetry 10 + simulation 50/50; server 17 + matches 9 (incl. real HTTP); headless-browser E2E (AI vs AI draft, RANDOM spawn, human vs AI, server down)
+
 ## Phase 4: Online Multiplayer (`/server` & `/client`)
 - [ ] Implement Socket.IO Room Manager (`create_room`, `join_room`, `start_game`)
 - [ ] Enforce server-authoritative move validation using `/shared/gameEngine.ts`
@@ -46,7 +56,8 @@
 ---
 
 ## Current Focus
-- **Completed:** Phase 3 — AI Arena. `/server` Express API with offline bots + OpenRouter/Groq LLMs and fallback; `/client` AI seats, spectator pacing, Pause/Resume, reasoning log. `tsc --noEmit` clean in `/shared`, `/server`, `/client`; `npm run build` passes in `/server` and `/client`; tests: shared 31 + simulation 50/50, server 17.
+- **Completed:** Phase 3.5 — Research telemetry. Piece ids, Voronoi/mobility analytics in `/shared/telemetry.ts`, match archive + JSON/CSV export endpoints, `npm run experiment`, client auto-save and Victory-modal analytics/exports. `tsc --noEmit` clean and builds pass in all packages; tests: shared 34 + telemetry 10 + simulation 50/50, server 17 + 9.
+- **Previously completed:** Phase 3 — AI Arena. `/server` Express API with offline bots + OpenRouter/Groq LLMs and fallback; `/client` AI seats, spectator pacing, Pause/Resume, reasoning log. `tsc --noEmit` clean in `/shared`, `/server`, `/client`; `npm run build` passes in `/server` and `/client`; tests: shared 31 + simulation 50/50, server 17.
 - **Next Immediate Task:** Phase 4 — Socket.IO room manager (`create_room`, `join_room`, `start_game`) with server-authoritative validation (`multiplayer-sync` skill).
 - **Not yet verified:** real OpenRouter/Groq calls (no API keys on this machine); the LLM path is covered by a fake OpenAI-compatible server in tests. Default free model names may be retired by providers — override with `OPENROUTER_MODELS` / `GROQ_MODELS`.
 
@@ -62,3 +73,6 @@
 - **2026-11-19:** Phase 3 AI Arena. LLMs choose an index from an engine-ranked shortlist (top 20 actions / top 15 placements) because 12x12 boards have thousands of legal actions. Heuristic bots live in `/shared/aiBots.ts` so the server and the browser fallback share them. API contract types live in `/shared/apiTypes.ts`.
 - **2026-11-19:** AI turn pacing is client-side for local matches (`MatchConfig.aiDelayMs`); CLAUDE.md's server-side delay applies to Phase 4 online rooms. Client API base URL: `NEXT_PUBLIC_API_URL` (default `http://localhost:4000`); server CORS: `CLIENT_ORIGIN` (default `http://localhost:3000`).
 - **2026-11-19:** `/server` switched to `"type": "module"`; `tsc` builds with `rootDir: ".."` into `dist/server` + `dist/shared`. Inside `/shared`, cross-file imports use `.ts` extensions (Turbopack can't resolve `.js` → `.ts`), with `rewriteRelativeImportExtensions` in the shared/server tsconfigs and `allowImportingTsExtensions` in the client tsconfig.
+- **2026-11-21:** Research telemetry. `GameState` gained `pieces` (persistent ids, deployment order, so a `RANDOM` spawn can be replayed). Metrics are computed only in `/shared/telemetry.ts`; the server never trusts client numbers — `POST /api/matches` replays the submitted decisions through the engine and rebuilds the whole log (illegal/unfinished logs → 400, duplicate id → 409). Server copy and client export are byte-identical JSON.
+- **2026-11-21:** Metric definitions: Voronoi sources are the totems of *active* tribes (eliminated tribes own nothing); exclusive regions use 8-connected empty components bordered by exactly one active tribe; legal action counts are exact move-arrow pairs (Σ over destinations of their Queen rays — verified against brute force); `opponentsMobilityDelta = after − before` (negative = options taken away). Directions use algebraic notation: `N` = higher rank (row + 1). `thinkTimeMs`: human = time since the decision became available; AI = request/compute latency without spectator pacing; `null` for random spawns.
+- **2026-11-21:** Match archive path: `MATCH_DATA_DIR` (default `server/data/matches`, gitignored). `/api/matches*` accepts JSON bodies up to 8 MB; other routes keep the 64 KB limit.

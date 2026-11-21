@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 
 dotenv.config({ quiet: true });
@@ -5,6 +7,14 @@ dotenv.config({ quiet: true });
 function list(value: string | undefined): string[] | null {
   if (value === undefined || value.trim() === '') return null;
   return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/** `/server` package root, whether running from `src/` (tsx) or `dist/server/src/` (built). */
+function serverRoot(): string {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const distMarker = `${path.sep}dist${path.sep}`;
+  const i = here.lastIndexOf(distMarker);
+  return i >= 0 ? here.slice(0, i) : path.resolve(here, '..');
 }
 
 /** Server configuration. API keys stay in /server/.env and are never sent to the client. */
@@ -22,4 +32,6 @@ export const config = {
   groqBaseUrl: process.env.GROQ_BASE_URL?.trim() || 'https://api.groq.com/openai/v1',
   /** Hard limit for one LLM call before falling back to the offline heuristic. */
   llmTimeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 10_000),
+  /** Where completed match telemetry is stored (gitignored). */
+  matchDataDir: process.env.MATCH_DATA_DIR?.trim() || path.join(serverRoot(), 'data', 'matches'),
 } as const;

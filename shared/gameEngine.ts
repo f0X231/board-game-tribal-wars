@@ -36,6 +36,16 @@ export type GamePhase = 'PLACEMENT' | 'PLAYING';
 /** `MANUAL` = players draft their totems one at a time; `RANDOM` = the draft is auto-completed randomly. */
 export type PlacementMode = 'MANUAL' | 'RANDOM';
 
+/**
+ * A totem with a persistent identity (`P1_1` = P1's first deployed totem).
+ * Ids never change when the totem moves, so telemetry can follow each piece.
+ */
+export interface Piece {
+  readonly id: string;
+  readonly player: PlayerId;
+  readonly position: Position;
+}
+
 export interface GameConfig {
   readonly boardSize: BoardSize;
   readonly playerCount: PlayerCount;
@@ -65,6 +75,12 @@ export interface GameState {
   /** Number of turns completed so far. */
   readonly turnNumber: number;
   readonly lastAction: MoveAction | null;
+  /**
+   * Every totem on the board with its persistent id, in deployment order (the
+   * snake-draft order for drafted matches, so a `RANDOM` spawn can be replayed
+   * from it). Always consistent with `board`.
+   */
+  readonly pieces: ReadonlyArray<Piece>;
 }
 
 export class GameRuleError extends Error {
@@ -162,6 +178,31 @@ export function getPlayerPieces(board: Board, player: PlayerId): Position[] {
   board.forEach((row, r) =>
     row.forEach((cell, c) => {
       if (cell === player) pieces.push({ row: r, col: c });
+    }),
+  );
+  return pieces;
+}
+
+/** Persistent piece id, e.g. `pieceId('P2', 3)` -> `P2_3`. */
+export function pieceId(player: PlayerId, ordinal: number): string {
+  return `${player}_${ordinal}`;
+}
+
+/** Id of the totem standing on `pos`, or `null`. */
+export function getPieceIdAt(state: GameState, pos: Position): string | null {
+  return state.pieces.find((p) => samePosition(p.position, pos))?.id ?? null;
+}
+
+/**
+ * Assigns ids to the totems of a board built without a draft history
+ * (row-major scan per player: the first P1 totem found is `P1_1`).
+ */
+export function assignPieceIds(board: Board): Piece[] {
+  const counts: Record<PlayerId, number> = { P1: 0, P2: 0, P3: 0, P4: 0 };
+  const pieces: Piece[] = [];
+  board.forEach((row, r) =>
+    row.forEach((cell, c) => {
+      if (isPlayerId(cell)) pieces.push({ id: pieceId(cell, ++counts[cell]), player: cell, position: { row: r, col: c } });
     }),
   );
   return pieces;
@@ -335,6 +376,7 @@ export function applyAction(state: GameState, action: MoveAction): GameState {
     board,
     turnNumber: state.turnNumber + 1,
     lastAction: { from: { ...from }, to: { ...to }, shoot: { ...shoot } },
+    pieces: state.pieces.map((p) => (samePosition(p.position, from) ? { ...p, position: { ...to } } : p)),
   };
 }
 
@@ -429,11 +471,13 @@ export function placePiece(state: GameState, pos: Position): GameState {
   const board = cloneBoard(state.board);
   board[pos.row]![pos.col] = placer;
   const placementIndex = state.placementIndex + 1;
+  const ordinal = state.pieces.filter((p) => p.player === placer).length + 1;
+  const pieces = [...state.pieces, { id: pieceId(placer, ordinal), player: placer, position: { ...pos } }];
 
   if (placementIndex < state.placementOrder.length) {
-    return { ...state, board, placementIndex, currentPlayer: state.placementOrder[placementIndex]! };
+    return { ...state, board, pieces, placementIndex, currentPlayer: state.placementOrder[placementIndex]! };
   }
-  return { ...state, board, placementIndex, phase: 'PLAYING', ...startBattle(board, state.players, placer) };
+  return { ...state, board, pieces, placementIndex, phase: 'PLAYING', ...startBattle(board, state.players, placer) };
 }
 
 /** Non-throwing variant of `placePiece`. */
@@ -481,6 +525,7 @@ export function createStateFromBoard(
     ...startBattle(board, players, currentPlayer),
     turnNumber: 0,
     lastAction: null,
+    pieces: assignPieceIds(board),
   };
 }
 
@@ -517,6 +562,7 @@ export function createGame(config: GameConfig, random: () => number = Math.rando
     winner: null,
     turnNumber: 0,
     lastAction: null,
+    pieces: [],
   };
   if ((config.placementMode ?? 'MANUAL') === 'MANUAL') return draft;
 

@@ -4,7 +4,7 @@
   "description": "",
   "main": "gameEngine.ts",
   "scripts": {
-    "test": "npx tsx gameEngine.test.ts",
+    "test": "npx tsx gameEngine.test.ts && npx tsx telemetry.test.ts",
     "typecheck": "tsc --noEmit",
     "simulate": "npx tsx simulateMatch.ts"
   },

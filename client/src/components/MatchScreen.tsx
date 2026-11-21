@@ -66,7 +66,14 @@ export function MatchScreen({ config, onLobby }: { config: MatchConfig; onLobby:
       </aside>
 
       {game.status === "FINISHED" && (
-        <VictoryModal game={game} onRematch={() => match.start(match.config)} onLobby={onLobby} />
+        <VictoryModal
+          game={game}
+          telemetry={match.telemetry}
+          saveStatus={match.saveStatus}
+          saveError={match.saveError}
+          onRematch={() => match.start(match.config)}
+          onLobby={onLobby}
+        />
       )}
     </div>
   );

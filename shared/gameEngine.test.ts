@@ -6,6 +6,7 @@ import {
   applyAction,
   createGame,
   createStateFromBoard,
+  getPieceIdAt,
   getPieceLimits,
   getQueenReachable,
   getValidActions,
@@ -517,6 +518,31 @@ test('RANDOM placement mode completes the snake draft', () => {
   assertEqual(s.phase, 'PLAYING', 'phase');
   assertEqual(s.placementIndex, 24, 'all 24 totems placed');
   assertEqual(s.currentPlayer, 'P1', '4p x6 (even rounds) -> P1 placed last');
+});
+
+test('piece ids: drafted totems get persistent ids in deployment order', () => {
+  const s = draftAll(createGame({ boardSize: 6, playerCount: 2, piecesPerPlayer: 2 }), [at(0, 0), at(5, 5), at(5, 0), at(0, 5)]);
+  assertEqual(s.pieces.map((p) => p.id), ['P1_1', 'P2_1', 'P2_2', 'P1_2'], 'snake order ids');
+  assertEqual(getPieceIdAt(s, at(0, 5)), 'P1_2', 'lookup by square');
+  assertEqual(getPieceIdAt(s, at(2, 2)), null, 'empty square has no id');
+});
+
+test('piece ids: a moving totem keeps its id and the board stays consistent', () => {
+  let s = draftAll(createGame({ boardSize: 6, playerCount: 2, piecesPerPlayer: 2 }), [at(0, 0), at(5, 5), at(5, 0), at(0, 5)]);
+  // P1 placed last -> moves first.
+  s = applyAction(s, act([0, 0], [2, 2], [3, 3]));
+  assertEqual(getPieceIdAt(s, at(2, 2)), 'P1_1', 'id followed the move');
+  assertEqual(getPieceIdAt(s, at(0, 0)), null, 'origin no longer holds a piece');
+  for (const p of s.pieces) assertEqual(s.board[p.position.row]![p.position.col], p.player, `${p.id} matches board`);
+});
+
+test('piece ids: random spawn and boards built from scratch are fully labelled', () => {
+  const r = createGame({ boardSize: 12, playerCount: 4, piecesPerPlayer: 6, placementMode: 'RANDOM' }, seeded(3));
+  assertEqual(r.pieces.length, 24, '24 ids');
+  assertEqual(new Set(r.pieces.map((p) => p.id)).size, 24, 'ids unique');
+  assertEqual(r.pieces.map((p) => p.player), r.placementOrder, 'pieces kept in snake-draft order');
+  const b = createStateFromBoard(parseBoard(['1....1', '......', '......', '......', '......', '2....2']), ['P1', 'P2']);
+  assertEqual(b.pieces.map((p) => p.id), ['P1_1', 'P1_2', 'P2_1', 'P2_2'], 'row-major ids');
 });
 
 // ---------------------------------------------------------------------------

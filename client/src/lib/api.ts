@@ -1,5 +1,6 @@
 import type { AiTurnResponse, ApiError, ModelInfo, ModelsResponse } from "@shared/apiTypes";
 import type { GameState } from "@shared/gameEngine";
+import type { MatchTelemetry } from "@shared/telemetry";
 
 /** Public base URL of the AI Arena server (not a secret; API keys stay on the server). */
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000").replace(/\/$/, "");
@@ -31,4 +32,20 @@ export async function requestAiTurn(state: GameState, modelId: string, signal: A
     throw new Error(body?.error ?? `Server responded ${res.status}`);
   }
   return (await res.json()) as AiTurnResponse;
+}
+
+/** Saves a completed match to the server's research archive (the server re-derives all metrics). */
+export async function submitMatch(match: MatchTelemetry, signal?: AbortSignal): Promise<"saved" | "duplicate"> {
+  const res = await fetch(`${API_URL}/api/matches`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(match),
+    signal: AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(15_000)]),
+  });
+  if (res.status === 409) return "duplicate";
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as ApiError | null;
+    throw new Error(body?.error ?? `Server responded ${res.status}`);
+  }
+  return "saved";
 }

@@ -1,10 +1,12 @@
 import {
   ALL_PLAYERS,
+  assignPieceIds,
   isBoardSize,
   isPlayerId,
   type Cell,
   type GameState,
   type MoveAction,
+  type Piece,
   type PlayerId,
   type Position,
 } from '../../shared/gameEngine.js';
@@ -77,6 +79,30 @@ export function parseGameState(input: unknown): ParseResult {
     lastAction = { from, to, shoot };
   }
 
+  // Piece ids: optional for older clients (derived from the board), but if present
+  // they must describe exactly the totems on the board.
+  let pieces: Piece[];
+  if (s.pieces === undefined) {
+    pieces = assignPieceIds(board);
+  } else {
+    if (!Array.isArray(s.pieces) || s.pieces.length > 24) return fail('pieces is malformed');
+    pieces = [];
+    const ids = new Set<string>();
+    for (const raw of s.pieces as unknown[]) {
+      if (!isObj(raw) || typeof raw.id !== 'string' || !/^P[1-4]_[1-9]$/.test(raw.id) || !isPid(raw.player)) {
+        return fail('pieces entry is malformed');
+      }
+      const pos = position(raw.position, size);
+      if (!pos || board[pos.row]![pos.col] !== raw.player || !raw.id.startsWith(`${raw.player}_`) || ids.has(raw.id)) {
+        return fail('pieces do not match the board');
+      }
+      ids.add(raw.id);
+      pieces.push({ id: raw.id, player: raw.player, position: pos });
+    }
+    const onBoard = board.flat().filter((c) => c !== 'EMPTY' && c !== 'FIRE').length;
+    if (onBoard !== pieces.length) return fail('pieces do not match the board');
+  }
+
   return {
     ok: true,
     state: {
@@ -94,6 +120,7 @@ export function parseGameState(input: unknown): ParseResult {
       winner: s.winner ?? null,
       turnNumber: s.turnNumber,
       lastAction,
+      pieces,
     },
   };
 }
