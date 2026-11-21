@@ -19,7 +19,7 @@ import { parseArgs } from 'node:util';
 import { config } from './config.js';
 import { AiRequestError, chooseAiTurn } from './aiService.js';
 import { MatchStore } from './matchRecorder.js';
-import { resolveModel } from './models.js';
+import { getModelCatalog, resolveModel } from './models.js';
 import {
   ALL_PLAYERS,
   createGame,
@@ -76,6 +76,12 @@ const { values } = parseArgs({
     tag: { type: 'string' },
   },
 });
+
+// Warm the live model catalog (capabilities drive per-model request parameters).
+const catalog = await getModelCatalog();
+for (const [provider, d] of Object.entries(catalog.discovery ?? {})) {
+  if (d.status !== 'no-key') console.log(`models: ${provider} ${d.status} (${d.count} free models)${d.error ? ` - ${d.error}` : ''}`);
+}
 
 const models = (values.models ?? '').split(',').map((m) => m.trim()).filter(Boolean);
 if (models.length < 2 || models.length > 4) fail('--models needs 2-4 comma-separated model ids');

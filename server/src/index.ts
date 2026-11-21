@@ -2,11 +2,10 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { config } from './config.js';
 import { AiRequestError, chooseAiTurn } from './aiService.js';
-import { listModels } from './models.js';
+import { getModelCatalog } from './models.js';
 import { parseGameState } from './stateValidation.js';
 import { MatchStore } from './matchRecorder.js';
 import { parseMatchSubmission } from './matchValidation.js';
-import type { ModelsResponse } from '../../shared/apiTypes.js';
 import { GameRuleError } from '../../shared/gameEngine.js';
 import { matchToCsv, rebuildMatchTelemetry } from '../../shared/telemetry.js';
 
@@ -24,17 +23,17 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-/** Available AI models; `available: false` means the provider key is missing from server/.env. */
-app.get('/api/models', (_req, res) => {
-  const body: ModelsResponse = {
-    models: listModels(),
-    providers: {
-      offline: true,
-      openrouter: config.openRouterApiKey !== null,
-      groq: config.groqApiKey !== null,
-    },
-  };
-  res.json(body);
+/**
+ * Available AI models: offline bots + live free models discovered from Groq and
+ * OpenRouter (cached 15 min; `?refresh=true` forces a reload; curated fallback
+ * list if discovery fails). `available: false` = provider key missing in server/.env.
+ */
+app.get('/api/models', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await getModelCatalog({ refresh: req.query.refresh === 'true' || req.query.refresh === '1' }));
+  } catch (err) {
+    next(err);
+  }
 });
 
 /**

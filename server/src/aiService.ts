@@ -1,4 +1,5 @@
 import OpenAI, { APIConnectionTimeoutError, APIError } from 'openai';
+import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import {
   getValidActions,
   getValidPlacements,
@@ -20,7 +21,7 @@ import {
   rankPlacements,
 } from '../../shared/aiBots.js';
 import { config } from './config.js';
-import { PROVIDER_BASE_URLS, resolveModel, type ModelInfo } from './models.js';
+import { PROVIDER_BASE_URLS, modelCapabilities, resolveModel, type ModelInfo } from './models.js';
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -154,32 +155,103 @@ export function parseChoice(raw: string, indexKey: 'actionIndex' | 'placementInd
   throw new FallbackReason('reply was not valid JSON with an index');
 }
 
+/** OpenRouter's unified reasoning control (ignored by models without reasoning). */
+interface OpenRouterReasoning {
+  enabled?: boolean;
+  max_tokens?: number;
+  effort?: 'low' | 'medium' | 'high';
+}
+
+/** Optional request parameters; a profile that a model rejects (HTTP 400) is skipped next time. */
+type RequestProfile = { name: string; temperature?: number; reasoning_effort?: 'none' | 'low'; reasoning?: OpenRouterReasoning };
+
+/**
+ * Ordered request profiles, most efficient first. Free reasoning models otherwise
+ * spend the whole token budget thinking and return empty content, so reasoning is
+ * disabled or capped where the model allows it. The last profile is always bare
+ * (model + messages + max_tokens): no `response_format`, nothing model-specific.
+ */
+export function requestProfiles(model: ModelInfo): RequestProfile[] {
+  const bare: RequestProfile = { name: 'bare' };
+  if (model.provider === 'groq') {
+    if (/gpt-oss/i.test(model.model)) return [{ name: 'effort-low', temperature: 0.4, reasoning_effort: 'low' }, { name: 'temp', temperature: 0.4 }, bare];
+    if (/qwen3|qwq|deepseek-r1/i.test(model.model)) return [{ name: 'effort-none', temperature: 0.4, reasoning_effort: 'none' }, { name: 'temp', temperature: 0.4 }, bare];
+    return [{ name: 'temp', temperature: 0.4 }, bare];
+  }
+  const { supportedParameters: params, reasoningMandatory } = modelCapabilities(model); // params null = unknown
+  const temp = params === null || params.includes('temperature') ? { temperature: 0.4 } : {};
+  const reasoning = params === null || params.includes('reasoning');
+  if (!reasoning) return [{ name: 'temp', ...temp }, bare];
+  const capped: RequestProfile = { name: 'reasoning-capped', ...temp, reasoning: { max_tokens: 512 } };
+  return reasoningMandatory ? [capped, bare] : [{ name: 'reasoning-off', ...temp, reasoning: { enabled: false } }, capped, bare];
+}
+
+/** Index of the first profile known to work for a model (learned from 400 responses). */
+const profileMemory = new Map<string, number>();
+
+/** Reasoning-capable chat message: some providers return the answer only in `reasoning`. */
+interface ReasoningMessage {
+  content?: string | null;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
+}
+
+function describeApiError(model: ModelInfo, err: InstanceType<typeof APIError>): string {
+  const detail = err.message.replace(/^\d{3}\s*/, '').slice(0, 100);
+  if (err.status === 404) return `${model.provider} API error 404: model not found or retired (refresh the model list)`;
+  return `${model.provider} API error ${err.status ?? ''}${detail ? `: ${detail}` : ''}`.trim();
+}
+
 async function askLlm(model: ModelInfo, prompt: string): Promise<string> {
   const client = clientFor(model);
   if (!client) throw new FallbackReason(`no API key configured for ${model.provider}`);
-  try {
-    const completion = await client.chat.completions.create(
-      {
-        model: model.model,
-        temperature: 0.4,
-        max_tokens: 1200,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: prompt },
-        ],
-      },
-      { timeout: config.llmTimeoutMs, signal: AbortSignal.timeout(config.llmTimeoutMs + 500) },
-    );
-    const content = completion.choices[0]?.message?.content;
-    if (!content) throw new FallbackReason('empty reply');
-    return content;
-  } catch (err) {
-    if (err instanceof FallbackReason) throw err;
-    if (err instanceof APIConnectionTimeoutError || (err instanceof Error && err.name === 'TimeoutError')) {
-      throw new FallbackReason(`timed out after ${Math.round(config.llmTimeoutMs / 1000)}s`);
+  const profiles = requestProfiles(model);
+  const deadline = Date.now() + config.llmTimeoutMs;
+  let i = Math.min(profileMemory.get(model.id) ?? 0, profiles.length - 1);
+  let retried429 = false;
+
+  for (;;) {
+    const { name: _name, ...extra } = profiles[i]!;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new FallbackReason(`timed out after ${Math.round(config.llmTimeoutMs / 1000)}s`);
+    const body: ChatCompletionCreateParamsNonStreaming & { reasoning?: OpenRouterReasoning } = {
+      model: model.model,
+      max_tokens: 2048,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: prompt },
+      ],
+      ...extra,
+    };
+    try {
+      const completion = await client.chat.completions.create(body, { timeout: remaining, signal: AbortSignal.timeout(remaining + 500) });
+      profileMemory.set(model.id, i);
+      const message: ReasoningMessage = completion.choices[0]?.message ?? {};
+      const content = message.content?.trim();
+      if (content) return content;
+      // Reasoning models sometimes put the final JSON only in the reasoning trace.
+      const trace = [message.reasoning, message.reasoning_content].find((t): t is string => typeof t === 'string' && t.includes('{'));
+      if (trace) return trace;
+      throw new FallbackReason(completion.choices[0]?.finish_reason === 'length' ? 'reply cut off (token limit)' : 'empty reply');
+    } catch (err) {
+      if (err instanceof FallbackReason) throw err;
+      if (err instanceof APIConnectionTimeoutError || (err instanceof Error && err.name === 'TimeoutError')) {
+        throw new FallbackReason(`timed out after ${Math.round(config.llmTimeoutMs / 1000)}s`);
+      }
+      // 400/422 = a parameter this model does not accept: retry with the next, simpler profile.
+      if (err instanceof APIError && (err.status === 400 || err.status === 422) && i < profiles.length - 1) {
+        i++;
+        continue;
+      }
+      // Free tiers are often briefly rate-limited upstream: one short retry if time allows.
+      if (err instanceof APIError && err.status === 429 && !retried429 && deadline - Date.now() > 4000) {
+        retried429 = true;
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+      if (err instanceof APIError) throw new FallbackReason(describeApiError(model, err));
+      throw new FallbackReason(err instanceof Error ? err.message.slice(0, 120) : 'unknown error');
     }
-    if (err instanceof APIError) throw new FallbackReason(`${model.provider} API error ${err.status ?? ''}`.trim());
-    throw new FallbackReason(err instanceof Error ? err.message.slice(0, 120) : 'unknown error');
   }
 }
 

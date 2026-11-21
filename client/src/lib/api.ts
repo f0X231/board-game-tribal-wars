@@ -14,8 +14,9 @@ export const LOCAL_BOTS: ModelInfo[] = [
   { id: "offline:random", provider: "offline", model: "", label: "Random Spirit", available: true, description: "Runs in your browser." },
 ];
 
-export async function fetchModels(signal?: AbortSignal): Promise<ModelsResponse> {
-  const res = await fetch(`${API_URL}/api/models`, { signal });
+/** Model catalog; `refresh` asks the server to re-discover live free models from Groq / OpenRouter. */
+export async function fetchModels(signal?: AbortSignal, refresh = false): Promise<ModelsResponse> {
+  const res = await fetch(`${API_URL}/api/models${refresh ? "?refresh=true" : ""}`, { signal });
   if (!res.ok) throw new Error(`Server responded ${res.status}`);
   return (await res.json()) as ModelsResponse;
 }

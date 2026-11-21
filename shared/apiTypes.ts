@@ -15,13 +15,33 @@ export interface ModelInfo {
   /** True if the model can actually be called (offline bots, or provider key configured on the server). */
   available: boolean;
   description: string;
+  /** `live` = discovered from the provider's /models endpoint, `curated` = built-in fallback list, `custom` = user-typed id. */
+  source?: 'builtin' | 'live' | 'curated' | 'custom';
+  /** Context window in tokens, when the provider reports it. */
+  contextLength?: number | null;
 }
 
-/** `GET /api/models` */
+export type LlmProvider = Exclude<AiProvider, 'offline'>;
+
+/** How a provider's model list was obtained. */
+export interface ProviderDiscovery {
+  /** `live` = fetched from the provider, `fallback` = discovery failed (curated list), `no-key` = provider disabled. */
+  status: 'live' | 'fallback' | 'no-key';
+  /** ISO time of the last successful fetch (null if never). */
+  fetchedAt: string | null;
+  error: string | null;
+  count: number;
+}
+
+/** `GET /api/models[?refresh=true]` */
 export interface ModelsResponse {
   models: ModelInfo[];
   providers: Record<AiProvider, boolean>;
+  discovery?: Record<LlmProvider, ProviderDiscovery>;
 }
+
+/** Custom model ids: `groq:<model>` or `openrouter:<vendor/model[:tag]>`. */
+export const CUSTOM_MODEL_ID_PATTERN = /^(groq|openrouter):[A-Za-z0-9][A-Za-z0-9._\-/:]{0,119}$/;
 
 /** `POST /api/ai-turn` request body. */
 export interface AiTurnRequest {

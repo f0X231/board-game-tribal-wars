@@ -47,6 +47,12 @@
 - [x] Client: per-decision `thinkTimeMs`, live telemetry on every placement/turn, auto-submit on victory, Post-Match Analytics + "Export Research JSON" / "Export CSV" in the Victory modal (works offline)
 - [x] Tests: shared 34 + telemetry 10 + simulation 50/50; server 17 + matches 9 (incl. real HTTP); headless-browser E2E (AI vs AI draft, RANDOM spawn, human vs AI, server down)
 
+## Phase 3.6: Live Free-Model Discovery & Request Compatibility
+- [x] `GET /api/models[?refresh=true]`: live discovery from Groq `/models` (active chat models; no whisper/orpheus/prompt-guard/safeguard) and OpenRouter `/models` (zero-priced or `:free`, text-only, `openrouter/free` first); 15-min cache, curated Nov-2026 fallback list, per-provider `discovery` status
+- [x] Request compatibility: never sends `response_format`; regex JSON extraction (also from `reasoning` when `content` is empty); per-model request profiles with automatic downgrade on HTTP 400/422 (Groq `reasoning_effort` low/none, OpenRouter reasoning off → capped 512 → bare, using `supported_parameters` + `reasoning.mandatory`); one retry on 429
+- [x] Lobby: models grouped *Built-in Offline Bots* / *Groq (Live Free Models)* / *OpenRouter (Live Free Models)*, **⟳ Refresh Models**, **✎ Custom model ID** per seat
+- [x] Verified live (Nov 21): all 4 Groq models + 7/12 OpenRouter models answered a battle turn with zero 400/404 (rest: upstream 429 rate limits, 1 timeout, 1 token-limit); 2 one-game experiments Groq vs OpenRouter → 32/33 LLM decisions without fallback; browser match gpt-oss-20b (custom id) vs Nemotron 3.5 Super VL → 17/17 without fallback
+
 ## Phase 4: Online Multiplayer (`/server` & `/client`)
 - [ ] Implement Socket.IO Room Manager (`create_room`, `join_room`, `start_game`)
 - [ ] Enforce server-authoritative move validation using `/shared/gameEngine.ts`
@@ -56,10 +62,11 @@
 ---
 
 ## Current Focus
-- **Completed:** Phase 3.5 — Research telemetry. Piece ids, Voronoi/mobility analytics in `/shared/telemetry.ts`, match archive + JSON/CSV export endpoints, `npm run experiment`, client auto-save and Victory-modal analytics/exports. `tsc --noEmit` clean and builds pass in all packages; tests: shared 34 + telemetry 10 + simulation 50/50, server 17 + 9.
+- **Completed:** Phase 3.6 — Live free-model discovery (Groq + OpenRouter), adaptive request profiles (no more 400/404 from retired models or unsupported params), Lobby Refresh Models + Custom Model ID. Server tests 23 + 9.
+- **Previously completed:** Phase 3.5 — Research telemetry. Piece ids, Voronoi/mobility analytics in `/shared/telemetry.ts`, match archive + JSON/CSV export endpoints, `npm run experiment`, client auto-save and Victory-modal analytics/exports. `tsc --noEmit` clean and builds pass in all packages; tests: shared 34 + telemetry 10 + simulation 50/50, server 17 + 9.
 - **Previously completed:** Phase 3 — AI Arena. `/server` Express API with offline bots + OpenRouter/Groq LLMs and fallback; `/client` AI seats, spectator pacing, Pause/Resume, reasoning log. `tsc --noEmit` clean in `/shared`, `/server`, `/client`; `npm run build` passes in `/server` and `/client`; tests: shared 31 + simulation 50/50, server 17.
 - **Next Immediate Task:** Phase 4 — Socket.IO room manager (`create_room`, `join_room`, `start_game`) with server-authoritative validation (`multiplayer-sync` skill).
-- **Not yet verified:** real OpenRouter/Groq calls (no API keys on this machine); the LLM path is covered by a fake OpenAI-compatible server in tests. Default free model names may be retired by providers — override with `OPENROUTER_MODELS` / `GROQ_MODELS`.
+- **Known limits:** OpenRouter free models are frequently rate-limited upstream (HTTP 429) and some mandatory-reasoning models exceed the 10s budget (`LLM_TIMEOUT_MS`); those turns fall back to `offline:heuristic` and are flagged `fallback` in telemetry.
 
 ## Decisions & Notes Log
 - **2026-11-19:** Project initialized as **Tribal Wars**. Decided on Full-Stack TypeScript (`Next.js` client, `Node.js/Express/Socket.IO` server, pure TS `shared` engine) and OpenAI-compatible free LLM APIs (OpenRouter/Groq).
@@ -76,3 +83,4 @@
 - **2026-11-21:** Research telemetry. `GameState` gained `pieces` (persistent ids, deployment order, so a `RANDOM` spawn can be replayed). Metrics are computed only in `/shared/telemetry.ts`; the server never trusts client numbers — `POST /api/matches` replays the submitted decisions through the engine and rebuilds the whole log (illegal/unfinished logs → 400, duplicate id → 409). Server copy and client export are byte-identical JSON.
 - **2026-11-21:** Metric definitions: Voronoi sources are the totems of *active* tribes (eliminated tribes own nothing); exclusive regions use 8-connected empty components bordered by exactly one active tribe; legal action counts are exact move-arrow pairs (Σ over destinations of their Queen rays — verified against brute force); `opponentsMobilityDelta = after − before` (negative = options taken away). Directions use algebraic notation: `N` = higher rank (row + 1). `thinkTimeMs`: human = time since the decision became available; AI = request/compute latency without spectator pacing; `null` for random spawns.
 - **2026-11-21:** Match archive path: `MATCH_DATA_DIR` (default `server/data/matches`, gitignored). `/api/matches*` accepts JSON bodies up to 8 MB; other routes keep the 64 KB limit.
+- **2026-11-21:** Groq retired `llama-3.3-70b-versatile`, `llama-3.1-8b-instant` and `mixtral-8x7b-32768` (cause of the 404/400 fallbacks in early research logs). Model lists are now discovered live; `GROQ_MODELS` / `OPENROUTER_MODELS` only override the curated fallback. Root cause of most "empty reply" failures was free reasoning models spending the whole `max_tokens` budget on reasoning, not `response_format` (which was never sent) — fixed with per-model reasoning controls (`max_tokens` raised to 2048).

@@ -8,15 +8,44 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 
 // ---- fake LLM provider ------------------------------------------------------
-type Mode = 'good' | 'think' | 'garbage' | 'out-of-range' | 'slow' | 'http-429';
+type Mode = 'good' | 'think' | 'garbage' | 'out-of-range' | 'slow' | 'http-429' | 'reasoning-only';
 let mode: Mode = 'good';
 let lastPrompt = '';
+let lastBody: Record<string, unknown> = {};
+let chatCalls = 0;
+let modelsCalls = 0;
+let modelsDown = false;
+/** Groq-style /models payload (includes non-chat models that must be filtered out). */
+const GROQ_MODELS_PAYLOAD = {
+  data: [
+    { id: 'openai/gpt-oss-120b', active: true, context_window: 131072 },
+    { id: 'qwen/qwen3.8-27b', active: true, context_window: 131072 },
+    { id: 'whisper-large-v3', active: true },
+    { id: 'meta-llama/llama-prompt-guard-2-86m', active: true },
+    { id: 'openai/gpt-oss-safeguard-20b', active: true },
+    { id: 'canopylabs/orpheus-v1-english', active: true },
+    { id: 'old-model', active: false },
+  ],
+};
 
 const fake = createServer((req: IncomingMessage, res: ServerResponse) => {
   let body = '';
   req.on('data', (c: Buffer) => (body += c.toString()));
   req.on('end', () => {
+    if (req.url?.endsWith('/models')) {
+      modelsCalls++;
+      if (modelsDown) res.writeHead(503).end('down');
+      else res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(GROQ_MODELS_PAYLOAD));
+      return;
+    }
+    chatCalls++;
     const parsed = JSON.parse(body) as { messages: Array<{ content: string }> };
+    lastBody = parsed as unknown as Record<string, unknown>;
+    // Like Groq's allam-2-7b: reject reasoning_effort with HTTP 400.
+    if ('reasoning_effort' in lastBody && String(lastBody.model).includes('rejects-effort')) {
+      res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { message: '`reasoning_effort` is not supported with this model' } }));
+      return;
+    }
     lastPrompt = parsed.messages.at(-1)?.content ?? '';
     const key = lastPrompt.includes('placementIndex') ? 'placementIndex' : 'actionIndex';
     const content: Record<Mode, string> = {
@@ -26,6 +55,7 @@ const fake = createServer((req: IncomingMessage, res: ServerResponse) => {
       'out-of-range': JSON.stringify({ [key]: 500, reasoning: 'oops' }),
       slow: '',
       'http-429': '',
+      'reasoning-only': '',
     };
     const send = () => {
       if (mode === 'http-429') {
@@ -38,7 +68,16 @@ const fake = createServer((req: IncomingMessage, res: ServerResponse) => {
           object: 'chat.completion',
           created: 0,
           model: 'fake',
-          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content: content[mode] } }],
+          choices: [
+            {
+              index: 0,
+              finish_reason: 'stop',
+              message:
+                mode === 'reasoning-only'
+                  ? { role: 'assistant', content: '', reasoning: `Thinking... option 3 looks best. {"${key}": 3, "reasoning": "from the trace"}` }
+                  : { role: 'assistant', content: content[mode] },
+            },
+          ],
         }),
       );
     };
@@ -55,7 +94,8 @@ process.env.GROQ_BASE_URL = `http://127.0.0.1:${port}/v1`;
 process.env.OPENROUTER_API_KEY = '';
 process.env.LLM_TIMEOUT_MS = '700';
 
-const { chooseAiTurn, parseChoice, AiRequestError } = await import('../src/aiService.js');
+const { chooseAiTurn, parseChoice, AiRequestError, requestProfiles } = await import('../src/aiService.js');
+const models = await import('../src/models.js');
 const { parseGameState } = await import('../src/stateValidation.js');
 const engine = await import('../../shared/gameEngine.js');
 const bots = await import('../../shared/aiBots.js');
@@ -213,6 +253,76 @@ await test('unknown model id / finished match are rejected', async () => {
     }
   }
   assert(JSON.stringify(codes) === '[400,409]', JSON.stringify(codes));
+});
+
+console.log('\nmodel discovery & request compatibility');
+await test('Groq filter keeps chat/reasoning models, drops whisper/orpheus/guard/safeguard/inactive', () => {
+  const ids = models.filterGroqModels(GROQ_MODELS_PAYLOAD).map((m) => m.model);
+  assert(JSON.stringify(ids) === JSON.stringify(['openai/gpt-oss-120b', 'qwen/qwen3.8-27b']), JSON.stringify(ids));
+});
+await test('OpenRouter filter: free text models only, openrouter/free first, expired dropped', () => {
+  const payload = {
+    data: [
+      { id: 'z/zeta:free', name: 'Zeta (free)', pricing: { prompt: '0', completion: '0' }, architecture: { input_modalities: ['text'], output_modalities: ['text'] }, supported_parameters: ['reasoning'] },
+      { id: 'a/alpha', name: 'Alpha', pricing: { prompt: '0', completion: '0' }, architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] } },
+      { id: 'paid/model', name: 'Paid', pricing: { prompt: '0.000001', completion: '0.000002' } },
+      { id: 'g/lyria:free', name: 'Lyria', pricing: { prompt: '0', completion: '0' }, architecture: { output_modalities: ['text', 'audio'] } },
+      { id: 'old/gone:free', name: 'Gone', pricing: { prompt: '0', completion: '0' }, expiration_date: '2020-01-01' },
+      { id: 'openrouter/free', name: 'Free Models Router', pricing: { prompt: '0', completion: '0' } },
+    ],
+  };
+  const list = models.filterOpenRouterModels(payload);
+  assert(JSON.stringify(list.map((m) => m.model)) === JSON.stringify(['openrouter/free', 'a/alpha', 'z/zeta:free']), JSON.stringify(list.map((m) => m.model)));
+  assert(list[2]!.label === 'Zeta' && list[2]!.supportedParameters?.includes('reasoning'), 'label / params');
+  const noRouter = models.filterOpenRouterModels({ data: [] });
+  assert(noRouter.length === 1 && noRouter[0]!.model === 'openrouter/free', 'router always present');
+});
+await test('catalog: live discovery, 15-min cache, ?refresh, curated fallback when discovery fails', async () => {
+  models.resetModelCatalog();
+  modelsCalls = 0;
+  modelsDown = true;
+  const down = await models.getModelCatalog();
+  assert(down.discovery?.groq.status === 'fallback' && down.discovery.groq.error === 'HTTP 503', JSON.stringify(down.discovery?.groq));
+  assert(down.models.some((m) => m.id === 'groq:openai/gpt-oss-120b' && m.source === 'curated'), 'curated list served');
+  modelsDown = false;
+  const live = await models.getModelCatalog({ refresh: true });
+  assert(live.discovery?.groq.status === 'live' && live.discovery.groq.count === 2, JSON.stringify(live.discovery?.groq));
+  assert(live.discovery.openrouter.status === 'no-key', 'openrouter disabled without key');
+  const groqIds = live.models.filter((m) => m.provider === 'groq').map((m) => m.id);
+  assert(JSON.stringify(groqIds) === JSON.stringify(['groq:openai/gpt-oss-120b', 'groq:qwen/qwen3.8-27b']), JSON.stringify(groqIds));
+  const calls = modelsCalls;
+  await models.getModelCatalog();
+  await models.getModelCatalog({ refresh: true }); // < 10s since the last fetch: served from cache
+  assert(modelsCalls === calls, `cache not used (${modelsCalls - calls} extra calls)`);
+  assert(models.resolveModel('groq:brand-new-model')?.source === 'custom', 'custom ids accepted');
+  assert(models.resolveModel('groq:bad id with spaces') === null, 'invalid custom id rejected');
+});
+await test('request profiles: no response_format; reasoning disabled/capped/low per provider', () => {
+  const p = (id: string) => requestProfiles(models.resolveModel(id)!);
+  assert(p('groq:openai/gpt-oss-120b')[0]!.reasoning_effort === 'low', 'gpt-oss low effort');
+  assert(p('groq:qwen/qwen3.8-27b')[0]!.reasoning_effort === 'none', 'qwen3 no thinking');
+  assert(p('groq:allam-2-7b').every((x) => x.reasoning_effort === undefined), 'plain groq model: no reasoning params');
+  const or = p('openrouter:some/model:free');
+  assert(or[0]!.reasoning?.enabled === false && or[1]!.reasoning?.max_tokens === 512 && or.at(-1)!.name === 'bare', JSON.stringify(or));
+  for (const id of ['groq:openai/gpt-oss-120b', 'openrouter:x/y:free']) {
+    assert(p(id).every((x) => !('response_format' in x)), 'never sends response_format');
+  }
+});
+await test('HTTP 400 for an unsupported parameter -> retries without it (no fallback), and remembers', async () => {
+  mode = 'good';
+  chatCalls = 0;
+  const id = 'groq:openai/gpt-oss-rejects-effort';
+  const r = await chooseAiTurn(battleState, id);
+  assert(!r.fallback && r.modelUsed === id, r.reasoning);
+  assert(chatCalls === 2 && !('reasoning_effort' in lastBody) && !('response_format' in lastBody), `calls ${chatCalls}`);
+  chatCalls = 0;
+  await chooseAiTurn(battleState, id);
+  assert(chatCalls === 1, 'working profile not remembered');
+});
+await test('answer only in the reasoning trace (empty content) is still parsed', async () => {
+  mode = 'reasoning-only';
+  const r = await chooseAiTurn(battleState, 'groq:openai/gpt-oss-120b');
+  assert(!r.fallback && r.reasoning === 'from the trace', JSON.stringify(r));
 });
 
 fake.close();

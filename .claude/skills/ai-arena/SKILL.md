@@ -12,14 +12,19 @@ When building or debugging AI bots, follow these patterns. Code map:
 - `/server/tests/aiService.test.ts` — `npm test`; uses a local fake OpenAI-compatible server (good JSON, `<think>` + fenced JSON, garbage, out-of-range index, slow > timeout, HTTP 429).
 - `/client/src/lib/api.ts`, `matchConfig.ts`, `useLocalMatch.ts` — AI seats, auto turns, pause, reasoning log.
 
-## 1. Providers & Models
-- Use the `openai` SDK (v7) with custom `baseURL`, `maxRetries: 0`, `timeout: LLM_TIMEOUT_MS` (default 10 000):
-  - **OpenRouter**: `https://openrouter.ai/api/v1` — defaults `meta-llama/llama-3.3-70b-instruct:free`, `qwen/qwen-2.5-72b-instruct:free`, `deepseek/deepseek-r1:free`, `google/gemma-2-9b-it:free`.
-  - **Groq**: `https://api.groq.com/openai/v1` — defaults `llama-3.3-70b-versatile`, `mixtral-8x7b-32768`.
-  - Free-tier catalogs change often: override with `OPENROUTER_MODELS` / `GROQ_MODELS` (comma-separated) in `/server/.env`. Base URLs can be overridden with `OPENROUTER_BASE_URL` / `GROQ_BASE_URL` (proxies, tests).
-- Model ids are `offline:heuristic`, `offline:random`, `openrouter:<model>`, `groq:<model>`. Unknown `openrouter:`/`groq:` ids are accepted (`resolveModel`) so new free models can be tried without code changes.
-- **Offline bots** need no key: `offline:heuristic` (mobility difference, trapped-piece penalties, eliminations, centre control; two-stage beam search ~35ms on 12x12 x 4 tribes; beats random ~19/20) and `offline:random`.
-- Keys live only in `/server/.env` (`OPENROUTER_API_KEY`, `GROQ_API_KEY`; see `/server/.env.example`). Never send keys or provider calls from `/client`.
+## 1. Providers & Models (live discovery)
+- Free-tier catalogs change constantly (e.g. Groq retired `llama-3.3-70b-versatile` / `mixtral-8x7b-32768` → 404). **Never hard-code model lists**: `/server/src/models.ts` discovers them live.
+  - **Groq** `GET https://api.groq.com/openai/v1/models`: keep `active` text models; drop `whisper`, `orpheus`, `prompt-guard`, `safeguard`, `llama-guard`, `tts`.
+  - **OpenRouter** `GET https://openrouter.ai/api/v1/models`: keep `pricing.prompt === "0" && pricing.completion === "0"` (or `:free`), text-in/text-out only, not expired; `openrouter/free` (auto-router) always first. Stores `supported_parameters` and `reasoning.mandatory` per model.
+  - Cached 15 min in memory; `GET /api/models?refresh=true` forces a reload (min 10s apart). On failure the last good list, else a curated Nov-2026 list (override with `GROQ_MODELS` / `OPENROUTER_MODELS`), is served with `discovery.<provider>.status = 'fallback'`.
+- Model ids: `offline:heuristic`, `offline:random`, `groq:<model>`, `openrouter:<model>`. Any id matching `CUSTOM_MODEL_ID_PATTERN` (`/shared/apiTypes.ts`) is accepted as a custom model (Lobby "Custom Model ID").
+- Requests (`askLlm` in `aiService.ts`, `openai` SDK v7, `maxRetries: 0`, total budget `LLM_TIMEOUT_MS` = 10s): **no `response_format`**; JSON is extracted from the text by regex (`parseChoice`), falling back to the `reasoning` field when `content` is empty.
+  - Ordered request profiles; an HTTP 400/422 moves to the next, simpler profile and the working one is remembered per model:
+    - Groq gpt-oss → `reasoning_effort: 'low'`; qwen3 → `'none'`; others → temperature only; last = bare.
+    - OpenRouter → `reasoning: {enabled: false}` (skipped if mandatory) → `reasoning: {max_tokens: 512}` → bare. Without these, free reasoning models burn `max_tokens` thinking and return empty content.
+  - One 1.5s retry on HTTP 429 (free tiers are often rate-limited upstream) if the budget allows. 404 = retired model ("refresh the model list").
+- **Offline bots** need no key: `offline:heuristic` and `offline:random`.
+- Keys live only in `/server/.env` (`OPENROUTER_API_KEY`, `GROQ_API_KEY`). Never call providers from `/client`.
 
 ## 2. Anti-Hallucination Selection (Critical)
 - **Never** let an LLM produce raw coordinates. The engine generates every option:
@@ -35,12 +40,12 @@ When building or debugging AI bots, follow these patterns. Code map:
 
 ## 4. API Endpoints (`/server`, default port 4000)
 - `GET /api/health` → `{ ok: true }`.
-- `GET /api/models` → `ModelsResponse` (`available: false` when the provider key is missing; `providers` flags).
+- `GET /api/models[?refresh=true]` → `ModelsResponse` (offline → Groq → OpenRouter; `available: false` when the key is missing; `discovery` per provider: `live | fallback | no-key`, `fetchedAt`, `error`, `count`).
 - `POST /api/ai-turn` with `{ state, modelId }` → `AiTurnResponse`: `{ kind: 'placement', placement } | { kind: 'move', move }` plus `reasoning`, `modelUsed`, `modelRequested`, `fallback`, `latencyMs`. Errors: 400 (bad body/state/unknown model), 409 (match finished), 422 (no legal option).
 - Security: CORS limited to `CLIENT_ORIGIN` (default `http://localhost:3000`), JSON body limit 64kb, strict state validation, `x-powered-by` disabled.
 
 ## 5. Client AI Seats & Spectator Mode
-- Lobby: each seat (`P1`–`P4`) is **Human** or a model from `/api/models` (unavailable ones disabled, "needs API key"). If the server is down, only the offline bots are offered and run in the browser. All-AI seats = spectator mode.
+- Lobby: each seat (`P1`–`P4`) is **Human** or a model from `/api/models`, grouped *Built-in Offline Bots* / *Groq (Live Free Models)* / *OpenRouter (Live Free Models)*; **⟳ Refresh Models** re-discovers; **✎ Custom model ID…** takes any `groq:`/`openrouter:` id. If the server is down, only the offline bots are offered and run in the browser. All-AI seats = spectator mode.
 - AI turn speed: `0.5s`, `1.2s`, `2.5s` (`MatchConfig.aiDelayMs`). Each AI turn takes at least this long (request time counts toward it).
 - `useLocalMatch` runs AI turns in an effect keyed on the current `GameState`; stale results are dropped (reducer checks `expected === state.game`) and in-flight requests are aborted on pause/reset/unmount.
 - **Pause / Resume AI** button whenever an AI seat exists. Human input is ignored on AI turns.
