@@ -70,6 +70,11 @@
 - [x] Tests: `server/tests/researchBots.test.ts` now 35 — playout-move legality (liberty rule, hierarchical sampling), isolated detection, Guo phases + book, both new bots on 6/10/12 × 2/4 tribes × both phases, 3500 ms and 5000 ms worker runs under the 5 s ceiling, 2-tribe matches and a 4-tribe 10x10 match
 - [x] Verified: 10x10 experiment campya vs guo at 1500 ms (2 games, 1–1, 0% fallback, max 1357 ms/turn); Guo moved through book → Opening → Midgame → Endgame
 
+## Phase 3.9: Round-Robin Research Tournaments
+- [x] `npm run experiment -- --round-robin --models all-research|a,b,c...`: every unique 1v1 pair (9 bots = 36 pairs), `--games` per pair (default 2, seats swapped), matches saved with `--tag`
+- [x] Round-Robin Leaderboard (rank, wins, losses, win %, avg Queen Voronoi, avg exclusive, avg/max think ms, fallback %) + head-to-head table; summary JSON `server/data/round-robin-<time>-<tag>.json` (config, leaderboard, head-to-head, match ids)
+- [x] Verified: 9-bot round-robin on 6x6 at 100 ms (72/72 matches, 0% fallback, summary + 72 tagged match files); regular mode and argument errors unchanged
+
 ## Phase 4: Online Multiplayer (`/server` & `/client`)
 - [ ] Implement Socket.IO Room Manager (`create_room`, `join_room`, `start_game`)
 - [ ] Enforce server-authoritative move validation using `/shared/gameEngine.ts`
@@ -79,7 +84,8 @@
 ---
 
 ## Current Focus
-- **Completed:** Phase 3.8 — research bots #8 `campya-liberty-mc` and #9 `guo-phased-uct` (9 research bots total). Tests: server 23 + 9 + 35, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
+- **Completed:** Phase 3.9 — `--round-robin` tournaments with leaderboard + summary JSON (`npm run experiment -- --round-robin --models all-research`).
+- **Previously completed:** Phase 3.8 — research bots #8 `campya-liberty-mc` and #9 `guo-phased-uct` (9 research bots total). Tests: server 23 + 9 + 35, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
 - **Previously completed:** Phase 3.7 — 7 deep-search research bots (Amazons papers adapted to Tribal Wars) with a 3–5 s anytime budget, worker threads, Lobby group, HUD indicator, experiment `--bot-budget-ms` / `--jsonl` / `--csv`. Tests: server 23 + 9 + 23, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
 - **Previously completed:** Phase 3.6 — Live free-model discovery (Groq + OpenRouter), adaptive request profiles (no more 400/404 from retired models or unsupported params), Lobby Refresh Models + Custom Model ID. Server tests 23 + 9.
 - **Previously completed:** Phase 3.5 — Research telemetry. Piece ids, Voronoi/mobility analytics in `/shared/telemetry.ts`, match archive + JSON/CSV export endpoints, `npm run experiment`, client auto-save and Victory-modal analytics/exports. `tsc --noEmit` clean and builds pass in all packages; tests: shared 34 + telemetry 10 + simulation 50/50, server 17 + 9.

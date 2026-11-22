@@ -80,6 +80,13 @@ cd server
 npm run experiment -- --models research:arrow-lsg,research:mg-peo-mcts --games 10 --board 10 \
   --bot-budget-ms 3500 --jsonl results.jsonl --csv results.csv
 ```
+**Round-robin of all research bots** (every unique 1v1 pair, 9 bots = 36 pairs, 2 games per pair by default so each bot plays both seats):
+```bash
+cd server
+npm run experiment -- --round-robin --models all-research --board 10 --tag rr-9bots
+```
+It prints a Round-Robin Leaderboard (wins, losses, win %, avg Queen Voronoi, avg/max think time) and a head-to-head table, and saves a summary to `server/data/round-robin-<time>-<tag>.json`. `--models` also accepts a list (e.g. `all-research,offline:heuristic`).
+
 Every match is also saved to `server/data/matches/` (served by `GET /api/matches` and `GET /api/matches/<id>/export?format=csv`). Options: `--board 6|10|12`, `--pieces N`, `--placement MANUAL|RANDOM`, `--seed N`, `--no-rotate`, `--tag name`. Mix in `offline:heuristic` or LLM ids to compare against other players.
 
 ---
