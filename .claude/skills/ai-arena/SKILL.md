@@ -26,6 +26,13 @@ When building or debugging AI bots, follow these patterns. Code map:
 - **Offline bots** need no key: `offline:heuristic` and `offline:random`.
 - Keys live only in `/server/.env` (`OPENROUTER_API_KEY`, `GROQ_API_KEY`). Never call providers from `/client`.
 
+## 1b. Research Search Bots (`research:*`, `/server/src/bots/`)
+- 7 bots after the Amazons papers (Hensgens 2001, Zhang et al. 2024, Song & Müller 2012, Lieberum 2005, Higashiuchi & Grimbergen 2005, Müller & Tegos 2002, Kloetzer/Iida/Bouzy 2009), listed under provider `research` ("Research Algorithms (7 Papers)").
+- Shared core: `evalUtils.ts` (typed-array `FastBoard`, Queen/King BFS, regions, filling bounds, `Clock`), `search.ts` (paranoid iterative-deepening alpha-beta with TT/aspiration/PVS/killers; Move-Group MCTS), `common.ts` (bot contract + snake-draft placement search).
+- Budget `BOT_TIME_BUDGET_MS` (default 3500, clamped 100–5000; `--bot-budget-ms` in `npm run experiment`). The search deadline leaves a safety margin, and `runner.ts` kills a worker at the 5000 ms hard ceiling, which falls back to `offline:heuristic`.
+- Searches run in a worker-thread pool so the event loop stays free. A search interrupted by its deadline must restore its `FastBoard` (`snapshot`/`restore`). Results are always re-validated with `validateAction`/`validatePlacement`.
+- Bots are deterministic apart from the clock: they use a seeded PRNG, never `Math.random()`.
+
 ## 2. Anti-Hallucination Selection (Critical)
 - **Never** let an LLM produce raw coordinates. The engine generates every option:
   - `PLAYING`: `rankActions(state)` → top **20** legal `MoveAction`s, listed as `i: move C3 -> F6, shoot arrow at F2`. Reply `{"actionIndex": n, "reasoning": "..."}`.

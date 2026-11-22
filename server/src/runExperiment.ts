@@ -2,7 +2,8 @@
  * Headless batch experiments: N full matches between bots/LLMs, every match saved
  * as research telemetry in the match archive (`server/data/matches/` by default).
  *
- *   npm run experiment -- --models offline:heuristic,groq:llama-3.3-70b-versatile --games 20
+ *   npm run experiment -- --models offline:heuristic,groq:openai/gpt-oss-20b --games 20
+ *   npm run experiment -- --models research:arrow-lsg,research:mg-peo-mcts --games 10 --jsonl out.jsonl --csv out.csv
  *
  * Options:
  *   --models     2-4 comma-separated model ids, one per seat (P1, P2, ...)       (required)
@@ -14,12 +15,18 @@
  *   --seed       seed for RANDOM spawns, for reproducible openings                  (optional)
  *   --pause-ms   wait between LLM calls (free-tier rate limits)                     (default 0)
  *   --tag        experiment name stored in every match log                         (optional)
+ *   --bot-budget-ms  thinking budget per turn for research:* bots, 100-5000  (default BOT_TIME_BUDGET_MS or 3500)
+ *   --jsonl      also append every match (full telemetry, one JSON per line) to this file   (optional)
+ *   --csv        also write every decision of the tournament as CSV rows to this file      (optional)
  */
+import { appendFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { config } from './config.js';
 import { AiRequestError, chooseAiTurn } from './aiService.js';
 import { MatchStore } from './matchRecorder.js';
 import { getModelCatalog, resolveModel } from './models.js';
+import { clampBudget } from './bots/index.js';
+import { shutdownResearchWorkers } from './bots/runner.js';
 import {
   ALL_PLAYERS,
   createGame,
@@ -36,6 +43,7 @@ import {
   buildMatchTelemetry,
   createMatchId,
   describeTransition,
+  matchToCsv,
   replayDecisions,
   spawnDecisions,
   type Decision,
@@ -59,7 +67,7 @@ function seeded(seed: number): () => number {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function fail(message: string): never {
-  console.error(`experiment: ${message}\nUsage: npm run experiment -- --models a,b[,c,d] [--games N] [--board 6|10|12] [--pieces N] [--placement MANUAL|RANDOM] [--no-rotate] [--seed N] [--pause-ms N] [--tag name]`);
+  console.error(`experiment: ${message}\nUsage: npm run experiment -- --models a,b[,c,d] [--games N] [--board 6|10|12] [--pieces N] [--placement MANUAL|RANDOM] [--no-rotate] [--seed N] [--pause-ms N] [--tag name] [--bot-budget-ms 100-5000] [--jsonl file] [--csv file]`);
   process.exit(1);
 }
 
@@ -74,6 +82,9 @@ const { values } = parseArgs({
     seed: { type: 'string' },
     'pause-ms': { type: 'string', default: '0' },
     tag: { type: 'string' },
+    'bot-budget-ms': { type: 'string' },
+    jsonl: { type: 'string' },
+    csv: { type: 'string' },
   },
 });
 
@@ -107,6 +118,24 @@ const pauseMs = Math.max(0, Number(values['pause-ms']) || 0);
 const rotate = !values['no-rotate'];
 const spawnRandom = values.seed === undefined ? Math.random : seeded(Number(values.seed));
 const store = new MatchStore(config.matchDataDir);
+const rawBudget = values['bot-budget-ms'] === undefined ? config.botTimeBudgetMs : Number(values['bot-budget-ms']);
+if (!Number.isFinite(rawBudget) || rawBudget < 100 || rawBudget > 5000) fail('--bot-budget-ms must be 100-5000');
+const botBudgetMs = clampBudget(rawBudget);
+const usesResearch = models.some((m) => m.startsWith('research:'));
+let csvHeaderWritten = false;
+if (values.csv) await writeFile(values.csv, '');
+if (values.jsonl) await writeFile(values.jsonl, '');
+
+/** Appends one finished match to the optional tournament exports. */
+async function exportMatch(telemetry: Parameters<typeof matchToCsv>[0]): Promise<void> {
+  if (values.jsonl) await appendFile(values.jsonl, JSON.stringify(telemetry) + '\n');
+  if (values.csv) {
+    const csv = matchToCsv(telemetry);
+    const body = csvHeaderWritten ? csv.slice(csv.indexOf('\n') + 1) : csv;
+    csvHeaderWritten = true;
+    await appendFile(values.csv, body.endsWith('\n') ? body : body + '\n');
+  }
+}
 
 /** Plays one match; `lineup[i]` is the model id for seat `ALL_PLAYERS[i]`. */
 async function playMatch(lineup: ReadonlyArray<string>): Promise<MatchSummary> {
@@ -130,7 +159,7 @@ async function playMatch(lineup: ReadonlyArray<string>): Promise<MatchSummary> {
     const seatIndex = ALL_PLAYERS.indexOf(state.currentPlayer);
     const modelId = lineup[seatIndex]!;
     const t0 = performance.now();
-    const res = await chooseAiTurn(state, modelId);
+    const res = await chooseAiTurn(state, modelId, { botBudgetMs });
     const meta = {
       player: state.currentPlayer,
       controller: modelId,
@@ -139,11 +168,12 @@ async function playMatch(lineup: ReadonlyArray<string>): Promise<MatchSummary> {
       reasoning: res.reasoning,
       thinkTimeMs: Math.round(performance.now() - t0),
     };
+    maxThink.set(modelId, Math.max(maxThink.get(modelId) ?? 0, meta.thinkTimeMs));
     const decision: Decision = res.kind === 'placement' ? { ...meta, kind: 'placement', placement: res.placement } : { ...meta, kind: 'move', move: res.move };
     const next = applyDecision(state, decision);
     events.push(describeTransition(state, next, decision, events.length));
     state = next;
-    if (pauseMs > 0 && !modelId.startsWith('offline:')) await sleep(pauseMs);
+    if (pauseMs > 0 && !modelId.startsWith('offline:') && !modelId.startsWith('research:')) await sleep(pauseMs);
   }
 
   const telemetry = buildMatchTelemetry(
@@ -160,8 +190,12 @@ async function playMatch(lineup: ReadonlyArray<string>): Promise<MatchSummary> {
     state,
   );
   await store.save(telemetry);
+  await exportMatch(telemetry);
   return telemetry.summary;
 }
+
+/** Slowest single decision per model (checks the research bots' 5 s ceiling). */
+const maxThink = new Map<string, number>();
 
 interface Tally {
   games: number;
@@ -176,7 +210,9 @@ interface Tally {
 
 console.log(
   `Experiment: ${games} game(s), ${boardSize}x${boardSize}, ${piecesPerPlayer} totems, ${placementMode} placement, ` +
-    `seats ${rotate ? 'rotated' : 'fixed'}\nModels: ${models.join(' vs ')}\nSaving to ${config.matchDataDir}\n`,
+    `seats ${rotate ? 'rotated' : 'fixed'}${usesResearch ? `, research bot budget ${botBudgetMs} ms/turn` : ''}\n` +
+    `Models: ${models.join(' vs ')}\nSaving to ${config.matchDataDir}` +
+    `${values.jsonl ? `\nJSONL: ${values.jsonl}` : ''}${values.csv ? `\nCSV: ${values.csv}` : ''}\n`,
 );
 
 const tally = new Map<string, Tally>(models.map((m) => [m, { games: 0, wins: 0, queen: 0, exclusive: 0, fallbacks: 0, decisions: 0, thinkMs: 0, timed: 0 }]));
@@ -225,6 +261,8 @@ console.table(
     'avg final exclusive': t.games ? +(t.exclusive / t.games).toFixed(1) : 0,
     'fallback %': t.decisions ? +((100 * t.fallbacks) / t.decisions).toFixed(1) : 0,
     'avg think ms': t.timed ? Math.round(t.thinkMs / t.timed) : null,
+    'max think ms': maxThink.get(model) ?? null,
   })),
 );
 console.log('Export: GET /api/matches  ·  GET /api/matches/<id>/export?format=csv');
+await shutdownResearchWorkers();

@@ -30,6 +30,11 @@ export const config = {
   /** Optional base-URL overrides (proxies / local test doubles). */
   openRouterBaseUrl: process.env.OPENROUTER_BASE_URL?.trim() || 'https://openrouter.ai/api/v1',
   groqBaseUrl: process.env.GROQ_BASE_URL?.trim() || 'https://api.groq.com/openai/v1',
+  /**
+   * Per-turn thinking budget of the `research:*` search bots (ms). Clamped to
+   * 100-5000; every turn is also cut off at a hard 5000 ms ceiling.
+   */
+  botTimeBudgetMs: Number(process.env.BOT_TIME_BUDGET_MS ?? 3500),
   /** Hard limit for one LLM call before falling back to the offline heuristic. */
   llmTimeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 10_000),
   /** Where completed match telemetry is stored (gitignored). */

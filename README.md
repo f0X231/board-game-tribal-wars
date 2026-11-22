@@ -30,6 +30,7 @@ tribal-wars/
    PORT=4000
    GROQ_API_KEY=your_groq_api_key_here
    OPENROUTER_API_KEY=your_openrouter_api_key_here
+   BOT_TIME_BUDGET_MS=3500   # thinking time per turn for the 7 research bots (100–5000)
    ```
    *(Note: Never commit `server/.env` to Git. It is already ignored by `.gitignore`.)*
 
@@ -57,6 +58,30 @@ npm run dev
 
 ---
 
+## 🔬 Research Algorithms (7 Papers)
+
+Seven deep-search bots based on the computer-Amazons literature, adapted to Tribal Wars rules (fire at both the vacated square and the arrow square, snake-draft placement, 2–4 tribes). They run on the server in worker threads, think for `BOT_TIME_BUDGET_MS` (default 3.5 s) per turn using iterative deepening or MCTS, and never exceed a hard 5 s ceiling. Pick them in the Lobby under **Research Algorithms (7 Papers)**; their search stats (e.g. `[Depth 4 | 382,912 nodes | Score +12.4]`) appear in the Battle Log and in the match telemetry.
+
+| Model id | Paper | Core idea |
+|---|---|---|
+| `research:anky-rel-territory` | Hensgens 2001 | Relative-territory evaluation (Queen BFS), selective top-K alpha-beta, single-agent endgame filling |
+| `research:mg-peo-mcts` | Zhang et al. 2024 | MCTS with Move Groups (move → arrow layers), UCT C=√0.5, 2-pass shallow rollouts, phased Table-1 evaluation |
+| `research:cgt-subgame` | Song & Müller 2012 | Board partition (simple / blocker territories, active areas), plodding bounds, AES safe moves, alpha-beta over active areas |
+| `research:amazong-guard` | Lieberum 2005 | `t + m + g − s` evaluation: openness-weighted territory, per-totem enclosure α, n-guard, filling defects; aspiration alpha-beta |
+| `research:tas-move-cat` | Higashiuchi & Grimbergen 2005 | 10-feature move categorization with progress-dependent ordering, alpha-beta + transposition table |
+| `research:arrow-lsg` | Müller & Tegos 2002 | Layered forward pruning (top 50% by min-distance, then full evaluation), NegaScout, endgame defect/zugzwang terms |
+| `research:tds-endgame` | Kloetzer, Iida & Bouzy 2009 | Subgame temperatures ((LeftStop − RightStop)/2), UCT in the hottest subgame, alpha-beta verification |
+
+### Running a research tournament
+```bash
+cd server
+npm run experiment -- --models research:arrow-lsg,research:mg-peo-mcts --games 10 --board 10 \
+  --bot-budget-ms 3500 --jsonl results.jsonl --csv results.csv
+```
+Every match is also saved to `server/data/matches/` (served by `GET /api/matches` and `GET /api/matches/<id>/export?format=csv`). Options: `--board 6|10|12`, `--pieces N`, `--placement MANUAL|RANDOM`, `--seed N`, `--no-rotate`, `--tag name`. Mix in `offline:heuristic` or LLM ids to compare against other players.
+
+---
+
 ## 🧪 Testing & Verification Commands
 
 ### 1. Test Core Game Engine (`/shared`)
@@ -72,9 +97,11 @@ npx tsc --noEmit              # Check TypeScript types
 ### 2. Verify Server & Client Builds
 Check for TypeScript errors or production build issues before committing changes:
 ```bash
-# Check Server
+# Check Server (tests include all 7 research bots on 6x6/10x10/12x12, 2 and 4 tribes, and the 5 s ceiling)
 cd server
 npx tsc --noEmit
+npm test
+npm run build
 
 # Check Client
 cd client

@@ -53,6 +53,16 @@
 - [x] Lobby: models grouped *Built-in Offline Bots* / *Groq (Live Free Models)* / *OpenRouter (Live Free Models)*, **⟳ Refresh Models**, **✎ Custom model ID** per seat
 - [x] Verified live (Nov 21): all 4 Groq models + 7/12 OpenRouter models answered a battle turn with zero 400/404 (rest: upstream 429 rate limits, 1 timeout, 1 token-limit); 2 one-game experiments Groq vs OpenRouter → 32/33 LLM decisions without fallback; browser match gpt-oss-20b (custom id) vs Nemotron 3.5 Super VL → 17/17 without fallback
 
+## Phase 3.7: Deep-Search Research Bots (7 Papers)
+- [x] Shared high-performance core `/server/src/bots/evalUtils.ts`: flat `Uint8Array` board, precomputed Queen-ray tables, incremental Zobrist hashing, allocation-free make/unmake (trail + arrow fire), multi-source Queen/King BFS (`Uint8Array`/`Int16Array`), territory features (t1, t2, c1, c2, w, mobility), 8-connected regions, plodding fill bounds, single-agent endgame filling, `Clock` deadlines
+- [x] Search engines `/server/src/bots/search.ts`: anytime iterative-deepening paranoid alpha-beta for 2–4 tribes (TT, aspiration windows, NegaScout/PVS, killers; verified equal to brute-force minimax) + Move-Group UCT MCTS
+- [x] 7 bots, each with its own PLACEMENT (snake-draft search) and PLAYING strategy and search stats in `reasoning`: `research:anky-rel-territory`, `research:mg-peo-mcts`, `research:cgt-subgame`, `research:amazong-guard`, `research:tas-move-cat`, `research:arrow-lsg`, `research:tds-endgame`
+- [x] Thinking budget `BOT_TIME_BUDGET_MS` (default 3500, 100–5000) and a hard 5000 ms ceiling per turn; worker-thread pool (`runner.ts`) keeps the API responsive, with in-process fallback if workers cannot start
+- [x] `GET /api/models` group "Research Algorithms (7 Papers)"; Lobby group + 🔬 icon; HUD "Thinking deeply (3–5s)…" indicator; stats in the Battle Log and `MatchTelemetry` reasoning
+- [x] `npm run experiment`: `--bot-budget-ms` (default 3500), `--jsonl` / `--csv` tournament exports, "max think ms" column
+- [x] Tests `server/tests/researchBots.test.ts` (23): engine parity, board restore after a deadline, alpha-beta vs minimax, all 7 bots × {6,10,12} × {2,4} tribes × both phases, worker path at 3500 ms and 5000 ms under the 5 s ceiling, 4 complete bot-vs-bot matches
+- [x] Verified: 10x10 tournament arrow-lsg vs mg-peo-mcts at 1500 ms (2 games, 0% fallback, max 1358 ms/turn, JSONL + CSV export); default-budget game at 3500 ms (max 3196 ms/turn); live `/api/ai-turn` on 12x12/4p in 3.3 s with `/api/health` answering in 3 ms meanwhile
+
 ## Phase 4: Online Multiplayer (`/server` & `/client`)
 - [ ] Implement Socket.IO Room Manager (`create_room`, `join_room`, `start_game`)
 - [ ] Enforce server-authoritative move validation using `/shared/gameEngine.ts`
@@ -62,10 +72,12 @@
 ---
 
 ## Current Focus
-- **Completed:** Phase 3.6 — Live free-model discovery (Groq + OpenRouter), adaptive request profiles (no more 400/404 from retired models or unsupported params), Lobby Refresh Models + Custom Model ID. Server tests 23 + 9.
+- **Completed:** Phase 3.7 — 7 deep-search research bots (Amazons papers adapted to Tribal Wars) with a 3–5 s anytime budget, worker threads, Lobby group, HUD indicator, experiment `--bot-budget-ms` / `--jsonl` / `--csv`. Tests: server 23 + 9 + 23, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
+- **Previously completed:** Phase 3.6 — Live free-model discovery (Groq + OpenRouter), adaptive request profiles (no more 400/404 from retired models or unsupported params), Lobby Refresh Models + Custom Model ID. Server tests 23 + 9.
 - **Previously completed:** Phase 3.5 — Research telemetry. Piece ids, Voronoi/mobility analytics in `/shared/telemetry.ts`, match archive + JSON/CSV export endpoints, `npm run experiment`, client auto-save and Victory-modal analytics/exports. `tsc --noEmit` clean and builds pass in all packages; tests: shared 34 + telemetry 10 + simulation 50/50, server 17 + 9.
 - **Previously completed:** Phase 3 — AI Arena. `/server` Express API with offline bots + OpenRouter/Groq LLMs and fallback; `/client` AI seats, spectator pacing, Pause/Resume, reasoning log. `tsc --noEmit` clean in `/shared`, `/server`, `/client`; `npm run build` passes in `/server` and `/client`; tests: shared 31 + simulation 50/50, server 17.
 - **Next Immediate Task:** Phase 4 — Socket.IO room manager (`create_room`, `join_room`, `start_game`) with server-authoritative validation (`multiplayer-sync` skill).
+- **Known limits (research bots):** depth reached at 3.5 s is about 4–5 plies on 12x12/4 tribes and deeper on 6x6; search is selective (top-K / 50% pruning), so a reported "WIN"/"LOSS" is a proof only within the pruned tree. Multi-tribe search is paranoid (all opponents minimise our score). A turn uses ~92% of the budget (safety margin for the 5 s ceiling).
 - **Known limits:** OpenRouter free models are frequently rate-limited upstream (HTTP 429) and some mandatory-reasoning models exceed the 10s budget (`LLM_TIMEOUT_MS`); those turns fall back to `offline:heuristic` and are flagged `fallback` in telemetry.
 
 ## Decisions & Notes Log
@@ -84,3 +96,4 @@
 - **2026-11-21:** Metric definitions: Voronoi sources are the totems of *active* tribes (eliminated tribes own nothing); exclusive regions use 8-connected empty components bordered by exactly one active tribe; legal action counts are exact move-arrow pairs (Σ over destinations of their Queen rays — verified against brute force); `opponentsMobilityDelta = after − before` (negative = options taken away). Directions use algebraic notation: `N` = higher rank (row + 1). `thinkTimeMs`: human = time since the decision became available; AI = request/compute latency without spectator pacing; `null` for random spawns.
 - **2026-11-21:** Match archive path: `MATCH_DATA_DIR` (default `server/data/matches`, gitignored). `/api/matches*` accepts JSON bodies up to 8 MB; other routes keep the 64 KB limit.
 - **2026-11-21:** Groq retired `llama-3.3-70b-versatile`, `llama-3.1-8b-instant` and `mixtral-8x7b-32768` (cause of the 404/400 fallbacks in early research logs). Model lists are now discovered live; `GROQ_MODELS` / `OPENROUTER_MODELS` only override the curated fallback. Root cause of most "empty reply" failures was free reasoning models spending the whole `max_tokens` budget on reasoning, not `response_format` (which was never sent) — fixed with per-model reasoning controls (`max_tokens` raised to 2048).
+- **2026-11-22:** Research bots run server-side only (no client copy): CPU search for 3–5 s would freeze the browser, and the client falls back to `offline:heuristic` if the server is unreachable. Adaptations to Tribal Wars: a turn burns two squares (vacated square + arrow), so territory "turn" values are ⌊squares / 2⌋; a blocker leaving its territory seals it with fire, so blocker territories are discounted rather than lost; 3–4 tribes use paranoid search against the union of opponents. Placement uses up to 50% of the budget (a draft has up to 24 picks). No new dependencies (`node:worker_threads` only).

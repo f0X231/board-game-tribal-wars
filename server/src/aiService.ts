@@ -22,6 +22,7 @@ import {
 } from '../../shared/aiBots.js';
 import { config } from './config.js';
 import { PROVIDER_BASE_URLS, modelCapabilities, resolveModel, type ModelInfo } from './models.js';
+import { runResearchTurn } from './bots/runner.js';
 
 // ---------------------------------------------------------------------------
 // Result types
@@ -110,7 +111,7 @@ Respond with exactly: {"placementIndex": <integer 0-${choices.length - 1}>, "rea
 
 const clients = new Map<string, OpenAI>();
 function clientFor(model: ModelInfo): OpenAI | null {
-  if (model.provider === 'offline') return null;
+  if (model.provider === 'offline' || model.provider === 'research') return null;
   const apiKey = model.provider === 'openrouter' ? config.openRouterApiKey : config.groqApiKey;
   if (!apiKey) return null;
   let c = clients.get(model.provider);
@@ -272,12 +273,18 @@ function offlineTurn(state: GameState, botId: 'offline:heuristic' | 'offline:ran
   return { kind: 'move', move, reasoning, modelUsed: botId };
 }
 
+export interface ChooseOptions {
+  /** Thinking budget for `research:*` bots (default: `BOT_TIME_BUDGET_MS`). */
+  botBudgetMs?: number;
+}
+
 /**
  * Decides one AI turn (placement or battle move) for `state.currentPlayer`.
  * LLMs only ever choose an index from engine-generated legal options; any failure
  * (missing key, timeout, bad JSON, bad index) falls back to `offline:heuristic`.
+ * Research bots search in a worker thread within their budget (hard cap 5 s).
  */
-export async function chooseAiTurn(state: GameState, modelId: string): Promise<AiTurnResult> {
+export async function chooseAiTurn(state: GameState, modelId: string, options: ChooseOptions = {}): Promise<AiTurnResult> {
   const started = Date.now();
   if (state.status !== 'PLAYING') throw new AiRequestError('The match is already finished.', 409);
   const model = resolveModel(modelId);
@@ -288,6 +295,13 @@ export async function chooseAiTurn(state: GameState, modelId: string): Promise<A
 
   if (model.provider === 'offline') {
     return done(offlineTurn(state, model.id === 'offline:random' ? 'offline:random' : 'offline:heuristic'), false);
+  }
+
+  if (model.provider === 'research') {
+    const turn = await runResearchTurn(state, model.id, options.botBudgetMs ?? config.botTimeBudgetMs);
+    if (turn.decision) return done(turn.decision, turn.decision.modelUsed !== model.id);
+    const fb = offlineTurn(state, 'offline:heuristic');
+    return done({ ...fb, reasoning: `(Fallback: ${model.label} ${turn.error ?? 'failed'}) ${fb.reasoning}` }, true);
   }
 
   try {

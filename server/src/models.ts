@@ -1,4 +1,5 @@
 import { config } from './config.js';
+import { RESEARCH_BOTS, clampBudget } from './bots/index.js';
 import {
   CUSTOM_MODEL_ID_PATTERN,
   type LlmProvider,
@@ -65,6 +66,22 @@ const OFFLINE_MODELS: ReadonlyArray<ModelInfo> = [
     source: 'builtin',
   },
 ];
+
+/** The 7 research search bots ("Research Algorithms (7 Papers)" group). */
+function researchModels(): ModelInfo[] {
+  const budgetMs = clampBudget(config.botTimeBudgetMs);
+  return RESEARCH_BOTS.map((b) => ({
+    id: b.id,
+    provider: 'research',
+    model: '',
+    label: `${b.label} (${b.paper})`,
+    available: true,
+    description: `${b.description} Thinks ~${(budgetMs / 1000).toFixed(1)}s per turn.`,
+    source: 'research',
+    paper: b.paper,
+    budgetMs,
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // Discovery
@@ -230,27 +247,27 @@ function providerModels(provider: LlmProvider): { list: ModelInfo[]; discovery: 
   };
 }
 
-/** Full catalog for `GET /api/models`: offline bots, then Groq, then OpenRouter. */
+/** Full catalog for `GET /api/models`: offline bots, research bots, then Groq, then OpenRouter. */
 export async function getModelCatalog(options: { refresh?: boolean } = {}): Promise<ModelsResponse> {
   const refresh = options.refresh === true;
   await Promise.all([ensureFresh('groq', refresh), ensureFresh('openrouter', refresh)]);
   const groq = providerModels('groq');
   const openrouter = providerModels('openrouter');
   return {
-    models: [...OFFLINE_MODELS, ...groq.list, ...openrouter.list],
-    providers: { offline: true, groq: config.groqApiKey !== null, openrouter: config.openRouterApiKey !== null },
+    models: [...OFFLINE_MODELS, ...researchModels(), ...groq.list, ...openrouter.list],
+    providers: { offline: true, research: true, groq: config.groqApiKey !== null, openrouter: config.openRouterApiKey !== null },
     discovery: { groq: groq.discovery, openrouter: openrouter.discovery },
   };
 }
 
 /** Models known right now (cached discovery or curated lists), without network access. */
 export function listModels(): ModelInfo[] {
-  return [...OFFLINE_MODELS, ...providerModels('groq').list, ...providerModels('openrouter').list];
+  return [...OFFLINE_MODELS, ...researchModels(), ...providerModels('groq').list, ...providerModels('openrouter').list];
 }
 
 /** Request capabilities from discovery: OpenRouter `supported_parameters` (null = unknown) and mandatory reasoning. */
 export function modelCapabilities(model: ModelInfo): { supportedParameters: ReadonlyArray<string> | null; reasoningMandatory: boolean } {
-  const found = model.provider === 'offline' ? undefined : state[model.provider].models?.find((m) => m.model === model.model);
+  const found = model.provider === 'offline' || model.provider === 'research' ? undefined : state[model.provider].models?.find((m) => m.model === model.model);
   return { supportedParameters: found?.supportedParameters ?? null, reasoningMandatory: found?.reasoningMandatory === true };
 }
 

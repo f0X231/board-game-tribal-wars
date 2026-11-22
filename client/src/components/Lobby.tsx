@@ -34,12 +34,13 @@ const PROVIDER_LABEL: Record<LlmProvider, string> = { groq: "Groq", openrouter: 
 /** Option-group label: "Groq (Live Free Models)", or "(curated list)" when live discovery failed. */
 function groupLabel(provider: ModelInfo["provider"], catalog: ModelsResponse | null): string {
   if (provider === "offline") return "Built-in Offline Bots";
+  if (provider === "research") return "Research Algorithms (7 Papers)";
   const d = catalog?.discovery?.[provider];
   const kind = !d || d.status === "live" ? "Live Free Models" : d.status === "fallback" ? "Curated list · discovery offline" : "needs API key";
   return `${PROVIDER_LABEL[provider]} (${kind})`;
 }
 
-const PROVIDER_ORDER: ReadonlyArray<ModelInfo["provider"]> = ["offline", "groq", "openrouter"];
+const PROVIDER_ORDER: ReadonlyArray<ModelInfo["provider"]> = ["offline", "research", "groq", "openrouter"];
 
 /** Inline "Custom Model ID" editor: provider + model id typed by hand (for newly released models). */
 function CustomModelForm({
@@ -145,7 +146,7 @@ function SeatPicker({
               <optgroup key={provider} label={groupLabel(provider, catalog)}>
                 {group.map((m) => (
                   <option key={m.id} value={m.id} disabled={!m.available} title={m.description}>
-                    🤖 {m.label}
+                    {m.provider === "research" ? "🔬" : "🤖"} {m.label}
                     {m.available ? "" : " — needs API key"}
                   </option>
                 ))}

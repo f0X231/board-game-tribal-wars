@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { isResearchModelId } from "@shared/apiTypes";
 import { getPiecesToPlace, getPlayerPieces, hasValidAction, type GameState } from "@shared/gameEngine";
 import type { LogEntry, TurnStep } from "@/lib/useLocalMatch";
 import { controllerLabel, type SlotController } from "@/lib/matchConfig";
@@ -30,16 +31,25 @@ export function PhaseBanner({
   paused: boolean;
 }) {
   const isAi = controller.type === "ai";
+  const deep = isAi && isResearchModelId(controller.modelId);
   const finished = game.status === "FINISHED";
   const tribe = TRIBES[finished && game.winner ? game.winner : game.currentPlayer];
   const phaseLabel = finished ? "FINISHED" : game.phase === "PLACEMENT" ? "PLACEMENT" : "BATTLE";
   const help = isAi
     ? paused
       ? { title: "AI paused", text: `${controllerLabel(controller)} is waiting. Press "Resume AI" to continue.` }
-      : {
-          title: `${controllerLabel(controller)} is thinking…`,
-          text: game.phase === "PLACEMENT" ? "Choosing where to raise a totem." : "Weighing moves and fire arrows from the engine's legal options.",
-        }
+      : deep
+        ? {
+            title: "Thinking deeply (3–5s)…",
+            text:
+              game.phase === "PLACEMENT"
+                ? `${controllerLabel(controller)} is searching the snake draft for the best totem square.`
+                : `${controllerLabel(controller)} is running its deep search (iterative deepening / MCTS) within the turn budget.`,
+          }
+        : {
+            title: `${controllerLabel(controller)} is thinking…`,
+            text: game.phase === "PLACEMENT" ? "Choosing where to raise a totem." : "Weighing moves and fire arrows from the engine's legal options.",
+          }
     : game.phase === "PLACEMENT"
       ? {
           title: `Raise a totem (${game.placementIndex + 1} of ${game.placementOrder.length})`,

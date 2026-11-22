@@ -3,7 +3,8 @@
  */
 import type { GameState, MoveAction, Position } from './gameEngine.ts';
 
-export type AiProvider = 'offline' | 'openrouter' | 'groq';
+/** `research` = the 7 deep-search bots from the Amazons literature (server-only, CPU search). */
+export type AiProvider = 'offline' | 'research' | 'openrouter' | 'groq';
 
 export interface ModelInfo {
   /** Stable id, e.g. `offline:heuristic`, `groq:llama-3.3-70b-versatile`, `openrouter:<model>:free`. */
@@ -16,12 +17,16 @@ export interface ModelInfo {
   available: boolean;
   description: string;
   /** `live` = discovered from the provider's /models endpoint, `curated` = built-in fallback list, `custom` = user-typed id. */
-  source?: 'builtin' | 'live' | 'curated' | 'custom';
+  source?: 'builtin' | 'research' | 'live' | 'curated' | 'custom';
   /** Context window in tokens, when the provider reports it. */
   contextLength?: number | null;
+  /** Research bots: the paper the algorithm follows, e.g. `Hensgens 2001`. */
+  paper?: string;
+  /** Research bots: per-turn thinking budget in ms (server `BOT_TIME_BUDGET_MS`). */
+  budgetMs?: number;
 }
 
-export type LlmProvider = Exclude<AiProvider, 'offline'>;
+export type LlmProvider = Exclude<AiProvider, 'offline' | 'research'>;
 
 /** How a provider's model list was obtained. */
 export interface ProviderDiscovery {
@@ -42,6 +47,9 @@ export interface ModelsResponse {
 
 /** Custom model ids: `groq:<model>` or `openrouter:<vendor/model[:tag]>`. */
 export const CUSTOM_MODEL_ID_PATTERN = /^(groq|openrouter):[A-Za-z0-9][A-Za-z0-9._\-/:]{0,119}$/;
+
+/** Research bot ids are `research:<name>`. */
+export const isResearchModelId = (id: string): boolean => id.startsWith('research:');
 
 /** `POST /api/ai-turn` request body. */
 export interface AiTurnRequest {
