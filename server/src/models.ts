@@ -67,7 +67,7 @@ const OFFLINE_MODELS: ReadonlyArray<ModelInfo> = [
   },
 ];
 
-/** The 7 research search bots ("Research Algorithms (7 Papers)" group). */
+/** The research search bots (Lobby group "Research Algorithms (N Papers)"). */
 function researchModels(): ModelInfo[] {
   const budgetMs = clampBudget(config.botTimeBudgetMs);
   return RESEARCH_BOTS.map((b) => ({

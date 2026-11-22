@@ -1,5 +1,5 @@
 /**
- * High-performance board core shared by the 7 research bots.
+ * High-performance board core shared by the research bots.
  *
  * - `FastBoard`: flat `Uint8Array` board (0 = empty, 1 = fire, 2..5 = P1..P4)
  *   with precomputed Queen-ray / King-neighbour tables, incremental Zobrist
@@ -1052,10 +1052,14 @@ export function arrowValue(fb: FastBoard, me: number, cell: number, dMe: Uint8Ar
   return v;
 }
 
-/** Random legal action for rollouts (rejection sampling, then exhaustive fallback). Returns -1 if none. */
-export function randomAction(fb: FastBoard, slot: number, rnd: () => number): number {
-  const list = fb.pieces[slot]!;
-  if (list.length === 0) return -1;
+/**
+ * Random legal action for rollouts (rejection sampling, then exhaustive fallback). Returns -1 if none.
+ * `allowed` optionally restricts which totems may move (falls back to all totems if none of them can).
+ */
+export function randomAction(fb: FastBoard, slot: number, rnd: () => number, allowed?: (cell: number) => boolean): number {
+  const all = fb.pieces[slot]!;
+  const list = allowed ? all.filter(allowed) : all;
+  if (list.length === 0) return all.length > 0 && allowed ? randomAction(fb, slot, rnd) : -1;
   const ray = fb.g.ray;
   const cells = fb.cells;
   for (let attempt = 0; attempt < 24; attempt++) {
@@ -1088,8 +1092,8 @@ export function randomAction(fb: FastBoard, slot: number, rnd: () => number): nu
       return pack(from, to, sh);
     }
   }
-  const all = fb.allActions(slot);
-  return all.length > 0 ? all[Math.floor(rnd() * all.length)]! : -1;
+  const every = fb.allActions(slot);
+  return every.length > 0 ? every[Math.floor(rnd() * every.length)]! : -1;
 }
 
 /** Formats `[Depth 4 | 18,420 nodes | Score +12.4]`-style stats. */

@@ -1,5 +1,5 @@
 /**
- * Registry of the 7 research bots + synchronous entry point (runs inside the
+ * Registry of the 9 research bots + synchronous entry point (runs inside the
  * bot worker thread, see `runner.ts`, or directly in tests).
  */
 import { getValidActions, getValidPlacements, validateAction, validatePlacement, type GameState } from '../../../shared/gameEngine.js';
@@ -8,9 +8,11 @@ import type { AiDecision } from '../../../shared/apiTypes.js';
 import { createAmazongGuard } from './amazongGuard.js';
 import { createAnkyRelTerritory } from './ankyRelTerritory.js';
 import { createArrowLsg } from './arrowLsg.js';
+import { createCampyaLibertyMc } from './campyaLibertyMc.js';
 import { createCgtSubgame } from './cgtSubgame.js';
 import type { ResearchBot } from './common.js';
 import { Clock, FastBoard, Timeout, slotOf } from './evalUtils.js';
+import { createGuoPhasedUct } from './guoPhasedUct.js';
 import { createMgPeoMcts } from './mgPeoMcts.js';
 import { createTasMoveCat } from './tasMoveCat.js';
 import { createTdsEndgame } from './tdsEndgame.js';
@@ -23,6 +25,8 @@ export const RESEARCH_BOTS: ReadonlyArray<ResearchBot> = [
   createTasMoveCat(),
   createArrowLsg(),
   createTdsEndgame(),
+  createCampyaLibertyMc(),
+  createGuoPhasedUct(),
 ];
 
 export const RESEARCH_BOT_IDS = RESEARCH_BOTS.map((b) => b.id);

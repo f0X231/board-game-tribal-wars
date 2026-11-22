@@ -34,7 +34,7 @@ const PROVIDER_LABEL: Record<LlmProvider, string> = { groq: "Groq", openrouter: 
 /** Option-group label: "Groq (Live Free Models)", or "(curated list)" when live discovery failed. */
 function groupLabel(provider: ModelInfo["provider"], catalog: ModelsResponse | null): string {
   if (provider === "offline") return "Built-in Offline Bots";
-  if (provider === "research") return "Research Algorithms (7 Papers)";
+  if (provider === "research") return `Research Algorithms (${catalog?.models.filter((m) => m.provider === "research").length ?? 0} Papers)`;
   const d = catalog?.discovery?.[provider];
   const kind = !d || d.status === "live" ? "Live Free Models" : d.status === "fallback" ? "Curated list · discovery offline" : "needs API key";
   return `${PROVIDER_LABEL[provider]} (${kind})`;

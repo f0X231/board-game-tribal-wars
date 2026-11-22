@@ -58,9 +58,9 @@ npm run dev
 
 ---
 
-## 🔬 Research Algorithms (7 Papers)
+## 🔬 Research Algorithms (9 Papers)
 
-Seven deep-search bots based on the computer-Amazons literature, adapted to Tribal Wars rules (fire at both the vacated square and the arrow square, snake-draft placement, 2–4 tribes). They run on the server in worker threads, think for `BOT_TIME_BUDGET_MS` (default 3.5 s) per turn using iterative deepening or MCTS, and never exceed a hard 5 s ceiling. Pick them in the Lobby under **Research Algorithms (7 Papers)**; their search stats (e.g. `[Depth 4 | 382,912 nodes | Score +12.4]`) appear in the Battle Log and in the match telemetry.
+Nine deep-search bots based on the computer-Amazons literature, adapted to Tribal Wars rules (fire at both the vacated square and the arrow square, snake-draft placement, 2–4 tribes). They run on the server in worker threads, think for `BOT_TIME_BUDGET_MS` (default 3.5 s) per turn using iterative deepening or MCTS, and never exceed a hard 5 s ceiling. Pick them in the Lobby under **Research Algorithms (9 Papers)**; their search stats (e.g. `[Depth 4 | 382,912 nodes | Score +12.4]`) appear in the Battle Log and in the match telemetry.
 
 | Model id | Paper | Core idea |
 |---|---|---|
@@ -71,6 +71,8 @@ Seven deep-search bots based on the computer-Amazons literature, adapted to Trib
 | `research:tas-move-cat` | Higashiuchi & Grimbergen 2005 | 10-feature move categorization with progress-dependent ordering, alpha-beta + transposition table |
 | `research:arrow-lsg` | Müller & Tegos 2002 | Layered forward pruning (top 50% by min-distance, then full evaluation), NegaScout, endgame defect/zugzwang terms |
 | `research:tds-endgame` | Kloetzer, Iida & Bouzy 2009 | Subgame temperatures ((LeftStop − RightStop)/2), UCT in the hottest subgame, alpha-beta verification |
+| `research:campya-liberty-mc` | Kloetzer, Iida & Bouzy 2007 | Split-action UCT; liberty-rule playouts (rescue own / enclose enemy totems with 1–2 liberties), isolated-totem pruning, accessibility cut-off after a fixed horizon |
+| `research:guo-phased-uct` | Guo, Li & Bao 2011 | Fire-count phases (opening book → UCT K = 0.5 / 0.4 / 0.3 with phase evaluations), fast hierarchical rollout sampling (totem → direction → destination & shot) |
 
 ### Running a research tournament
 ```bash
@@ -97,7 +99,7 @@ npx tsc --noEmit              # Check TypeScript types
 ### 2. Verify Server & Client Builds
 Check for TypeScript errors or production build issues before committing changes:
 ```bash
-# Check Server (tests include all 7 research bots on 6x6/10x10/12x12, 2 and 4 tribes, and the 5 s ceiling)
+# Check Server (tests include all 9 research bots on 6x6/10x10/12x12, 2 and 4 tribes, and the 5 s ceiling)
 cd server
 npx tsc --noEmit
 npm test

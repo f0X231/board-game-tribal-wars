@@ -27,7 +27,8 @@ When building or debugging AI bots, follow these patterns. Code map:
 - Keys live only in `/server/.env` (`OPENROUTER_API_KEY`, `GROQ_API_KEY`). Never call providers from `/client`.
 
 ## 1b. Research Search Bots (`research:*`, `/server/src/bots/`)
-- 7 bots after the Amazons papers (Hensgens 2001, Zhang et al. 2024, Song & Müller 2012, Lieberum 2005, Higashiuchi & Grimbergen 2005, Müller & Tegos 2002, Kloetzer/Iida/Bouzy 2009), listed under provider `research` ("Research Algorithms (7 Papers)").
+- 9 bots after the Amazons papers (Hensgens 2001, Zhang et al. 2024, Song & Müller 2012, Lieberum 2005, Higashiuchi & Grimbergen 2005, Müller & Tegos 2002, Kloetzer/Iida/Bouzy 2009, Kloetzer/Iida/Bouzy 2007, Guo/Li/Bao 2011), listed under provider `research` (Lobby: "Research Algorithms (N Papers)").
+- To add a bot: implement `ResearchBot` (`common.ts`) and append it to `RESEARCH_BOTS` in `bots/index.ts`. The catalog (`models.ts`), `chooseAiTurn`, the worker pool, the Lobby group and the per-bot tests all read that registry.
 - Shared core: `evalUtils.ts` (typed-array `FastBoard`, Queen/King BFS, regions, filling bounds, `Clock`), `search.ts` (paranoid iterative-deepening alpha-beta with TT/aspiration/PVS/killers; Move-Group MCTS), `common.ts` (bot contract + snake-draft placement search).
 - Budget `BOT_TIME_BUDGET_MS` (default 3500, clamped 100–5000; `--bot-budget-ms` in `npm run experiment`). The search deadline leaves a safety margin, and `runner.ts` kills a worker at the 5000 ms hard ceiling, which falls back to `offline:heuristic`.
 - Searches run in a worker-thread pool so the event loop stays free. A search interrupted by its deadline must restore its `FastBoard` (`snapshot`/`restore`). Results are always re-validated with `validateAction`/`validatePlacement`.

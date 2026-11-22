@@ -63,6 +63,13 @@
 - [x] Tests `server/tests/researchBots.test.ts` (23): engine parity, board restore after a deadline, alpha-beta vs minimax, all 7 bots × {6,10,12} × {2,4} tribes × both phases, worker path at 3500 ms and 5000 ms under the 5 s ceiling, 4 complete bot-vs-bot matches
 - [x] Verified: 10x10 tournament arrow-lsg vs mg-peo-mcts at 1500 ms (2 games, 0% fallback, max 1358 ms/turn, JSONL + CSV export); default-budget game at 3500 ms (max 3196 ms/turn); live `/api/ai-turn` on 12x12/4p in 3.3 s with `/api/health` answering in 3 ms meanwhile
 
+## Phase 3.8: Research Bots #8 and #9
+- [x] `research:campya-liberty-mc` (Kloetzer, Iida & Bouzy 2007): split-action UCT (movement / arrow levels), liberty-rule playouts (rescue own totems with 1–2 liberties, enclose enemy ones), isolated-totem pruning while contested regions exist, accessibility cut-off (`D1_me < D1_opp` + mobility) after 6 plies (24 in the endgame)
+- [x] `research:guo-phased-uct` (Guo, Li & Bao 2011): fire-ratio phases (14/92, 50/92), opening book on the first battle turn (star points + centre), UCT K = 0.5 / 0.4 / 0.3 with retention 96/28 → 64/20 → 48/14, phase evaluations (mobility-led → t1 + t2 + mobility → territory), hierarchical rollout sampling
+- [x] Registered in `bots/index.ts` (feeds `/api/models`, `chooseAiTurn`, the worker pool and the experiment runner); Lobby group label now counts the bots ("Research Algorithms (9 Papers)")
+- [x] Tests: `server/tests/researchBots.test.ts` now 35 — playout-move legality (liberty rule, hierarchical sampling), isolated detection, Guo phases + book, both new bots on 6/10/12 × 2/4 tribes × both phases, 3500 ms and 5000 ms worker runs under the 5 s ceiling, 2-tribe matches and a 4-tribe 10x10 match
+- [x] Verified: 10x10 experiment campya vs guo at 1500 ms (2 games, 1–1, 0% fallback, max 1357 ms/turn); Guo moved through book → Opening → Midgame → Endgame
+
 ## Phase 4: Online Multiplayer (`/server` & `/client`)
 - [ ] Implement Socket.IO Room Manager (`create_room`, `join_room`, `start_game`)
 - [ ] Enforce server-authoritative move validation using `/shared/gameEngine.ts`
@@ -72,7 +79,8 @@
 ---
 
 ## Current Focus
-- **Completed:** Phase 3.7 — 7 deep-search research bots (Amazons papers adapted to Tribal Wars) with a 3–5 s anytime budget, worker threads, Lobby group, HUD indicator, experiment `--bot-budget-ms` / `--jsonl` / `--csv`. Tests: server 23 + 9 + 23, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
+- **Completed:** Phase 3.8 — research bots #8 `campya-liberty-mc` and #9 `guo-phased-uct` (9 research bots total). Tests: server 23 + 9 + 35, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
+- **Previously completed:** Phase 3.7 — 7 deep-search research bots (Amazons papers adapted to Tribal Wars) with a 3–5 s anytime budget, worker threads, Lobby group, HUD indicator, experiment `--bot-budget-ms` / `--jsonl` / `--csv`. Tests: server 23 + 9 + 23, shared 34 + 10; `tsc --noEmit` and builds clean in all packages.
 - **Previously completed:** Phase 3.6 — Live free-model discovery (Groq + OpenRouter), adaptive request profiles (no more 400/404 from retired models or unsupported params), Lobby Refresh Models + Custom Model ID. Server tests 23 + 9.
 - **Previously completed:** Phase 3.5 — Research telemetry. Piece ids, Voronoi/mobility analytics in `/shared/telemetry.ts`, match archive + JSON/CSV export endpoints, `npm run experiment`, client auto-save and Victory-modal analytics/exports. `tsc --noEmit` clean and builds pass in all packages; tests: shared 34 + telemetry 10 + simulation 50/50, server 17 + 9.
 - **Previously completed:** Phase 3 — AI Arena. `/server` Express API with offline bots + OpenRouter/Groq LLMs and fallback; `/client` AI seats, spectator pacing, Pause/Resume, reasoning log. `tsc --noEmit` clean in `/shared`, `/server`, `/client`; `npm run build` passes in `/server` and `/client`; tests: shared 31 + simulation 50/50, server 17.
@@ -97,3 +105,4 @@
 - **2026-11-21:** Match archive path: `MATCH_DATA_DIR` (default `server/data/matches`, gitignored). `/api/matches*` accepts JSON bodies up to 8 MB; other routes keep the 64 KB limit.
 - **2026-11-21:** Groq retired `llama-3.3-70b-versatile`, `llama-3.1-8b-instant` and `mixtral-8x7b-32768` (cause of the 404/400 fallbacks in early research logs). Model lists are now discovered live; `GROQ_MODELS` / `OPENROUTER_MODELS` only override the curated fallback. Root cause of most "empty reply" failures was free reasoning models spending the whole `max_tokens` budget on reasoning, not `response_format` (which was never sent) — fixed with per-model reasoning controls (`max_tokens` raised to 2048).
 - **2026-11-22:** Research bots run server-side only (no client copy): CPU search for 3–5 s would freeze the browser, and the client falls back to `offline:heuristic` if the server is unreachable. Adaptations to Tribal Wars: a turn burns two squares (vacated square + arrow), so territory "turn" values are ⌊squares / 2⌋; a blocker leaving its territory seals it with fire, so blocker territories are discounted rather than lost; 3–4 tribes use paranoid search against the union of opponents. Placement uses up to 50% of the budget (a draft has up to 24 picks). No new dependencies (`node:worker_threads` only).
+- **2026-11-22:** Bots #8/#9. CAMPYA's "isolated" totems are the ones that border no contested region (closed single-tribe pockets); they are pruned only while some contested region exists, so endgame filling still works. Guo's n_bars thresholds (14 and 50 of 92 free squares on 10x10) are applied as fire ratios so they scale to 6x6 and 12x12; the book move is played only when the Opening phase coincides with our first battle turn.

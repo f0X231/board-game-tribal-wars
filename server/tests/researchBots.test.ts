@@ -4,7 +4,7 @@
  * 1. Core: FastBoard move generation / elimination checks agree with the shared
  *    engine; make/unmake and deadline interruptions leave the board untouched;
  *    the alpha-beta engine (TT + PVS + killers) returns the exact minimax value.
- * 2. All 7 bots complete PLACEMENT and PLAYING turns on 6x6, 10x10, 12x12 for
+ * 2. All 9 bots complete PLACEMENT and PLAYING turns on 6x6, 10x10, 12x12 for
  *    2 and 4 tribes, with engine-legal results and within budget.
  * 3. Full budget through the worker pool (the production path): every bot at the
  *    default 3500 ms, and 5000 ms, stays under the 5000 ms hard ceiling.
@@ -22,6 +22,10 @@ const { RESEARCH_BOTS, runResearchBot, DEFAULT_BOT_BUDGET_MS, HARD_CEILING_MS } 
 const { chooseAiTurn } = await import('../src/aiService.js');
 const { shutdownResearchWorkers } = await import('../src/bots/runner.js');
 const { listModels } = await import('../src/models.js');
+const { isolatedPieces, libertyMove } = await import('../src/bots/campyaLibertyMc.js');
+const { bookSquares, guoPhase, hierarchicalAction } = await import('../src/bots/guoPhasedUct.js');
+const { Scratch, prng } = await import('../src/bots/evalUtils.js');
+const { createStateFromBoard } = await import('../../shared/gameEngine.js');
 
 let passed = 0;
 const failures: string[] = [];
@@ -164,13 +168,73 @@ await test('alpha-beta (TT + PVS + killers + aspiration) equals brute-force mini
   assert(checked >= 5, `only ${checked} endgame positions checked`);
 });
 
-await test('GET /api/models catalog lists the 7 research bots (Research Algorithms group)', () => {
+await test('GET /api/models catalog lists the 9 research bots (Research Algorithms group)', () => {
   const research = listModels().filter((m) => m.provider === 'research');
-  assert(research.length === 7, `found ${research.length}`);
+  assert(research.length === 9, `found ${research.length}`);
   const ids = research.map((m) => m.id).sort();
-  const expected = ['research:amazong-guard', 'research:anky-rel-territory', 'research:arrow-lsg', 'research:cgt-subgame', 'research:mg-peo-mcts', 'research:tas-move-cat', 'research:tds-endgame'];
+  const expected = ['research:amazong-guard', 'research:anky-rel-territory', 'research:arrow-lsg', 'research:campya-liberty-mc', 'research:cgt-subgame', 'research:guo-phased-uct', 'research:mg-peo-mcts', 'research:tas-move-cat', 'research:tds-endgame'];
   assert(JSON.stringify(ids) === JSON.stringify(expected), ids.join(','));
   assert(research.every((m) => m.available && m.paper && m.budgetMs === DEFAULT_BOT_BUDGET_MS), 'metadata');
+});
+
+console.log('\nbots #8 / #9 internals');
+/** Engine-legal set of packed actions for the side to move. */
+function legalSet(fb: InstanceType<typeof FastBoard>, slot: number): Set<number> {
+  return new Set(fb.allActions(slot, []));
+}
+
+await test('campya: liberty-rule playout moves and guo: hierarchical samples are always legal', () => {
+  for (let i = 0; i < 18; i++) {
+    const size = ([6, 10, 12] as const)[i % 3]!;
+    const s = battlePosition(size, (2 + (i % 3)) as 2 | 3 | 4, size === 6 ? 3 : 5, 2 + i, 300 + i);
+    if (s.status !== 'PLAYING') continue;
+    const fb = FastBoard.fromState(s);
+    const me = slotOf(s.currentPlayer);
+    const legal = legalSet(fb, me);
+    const rnd = prng(i + 1);
+    const iso = isolatedPieces(fb, new Scratch(fb.size));
+    const before = boardKey(fb);
+    for (let k = 0; k < 300; k++) {
+      const a = libertyMove(fb, me, rnd, iso);
+      assert(legal.has(a), `illegal liberty-rule move at position ${i}`);
+      const h = hierarchicalAction(fb, me, rnd);
+      assert(legal.has(h), `illegal hierarchical sample at position ${i}`);
+    }
+    assert(boardKey(fb) === before, 'playout sampling changed the board');
+  }
+});
+
+await test('campya: totems sealed in their own region are isolated only while a contest remains', () => {
+  // P1 at a1 sealed in by fire (own 2-square pocket a1/b1); P1 + P2 contest the rest.
+  const rows = ['1.#...', '###...', '......', '..1...', '....2.', '......'];
+  const board = rows.map((r) => [...r].map((c) => (c === '.' ? 'EMPTY' : c === '#' ? 'FIRE' : (`P${c}` as 'P1' | 'P2'))));
+  const s = createStateFromBoard(board, ['P1', 'P2'], 'P1');
+  const fb = FastBoard.fromState(s);
+  const iso = isolatedPieces(fb, new Scratch(fb.size));
+  assert(iso.size === 1 && iso.has(0), `isolated = ${[...iso].join(',')}`);
+  // With no contested region left, nothing is pruned.
+  const sealed = ['1.#...', '######', '......', '......', '....2.', '......'].map((r) => [...r].map((c) => (c === '.' ? 'EMPTY' : c === '#' ? 'FIRE' : (`P${c}` as 'P1' | 'P2'))));
+  const fb2 = FastBoard.fromState(createStateFromBoard(sealed, ['P1', 'P2'], 'P1'));
+  assert(isolatedPieces(fb2, new Scratch(fb2.size)).size === 0, 'pruned without any contest');
+});
+
+await test('guo: fire-ratio phases (14/92, 50/92) and opening book on the first turn', () => {
+  const fresh = createGame({ boardSize: 10, playerCount: 2, piecesPerPlayer: 4, placementMode: 'RANDOM' }, seeded(5));
+  assert(guoPhase(FastBoard.fromState(fresh)) === 0, 'fresh board not opening');
+  let s = fresh;
+  const seen = new Set<number>();
+  while (s.status === 'PLAYING') {
+    seen.add(guoPhase(FastBoard.fromState(s)));
+    s = applyAction(s, heuristicAction(s)!);
+  }
+  assert(seen.has(0) && seen.has(1) && seen.has(2), `phases seen: ${[...seen].join(',')}`);
+  const book = new Set(bookSquares(10));
+  assert(book.size === 8, `book squares ${book.size}`);
+  const first = runResearchBot(fresh, 'research:guo-phased-uct', 300);
+  assert(first.kind === 'move' && first.reasoning.startsWith('Opening book'), first.reasoning);
+  assert(book.has(first.move.to.row * 10 + first.move.to.col), 'book move not on a book square');
+  const later = runResearchBot(battlePosition(10, 2, 4, 6, 5), 'research:guo-phased-uct', 300);
+  assert(later.reasoning.startsWith('Phased UCT'), later.reasoning);
 });
 
 console.log('\nall bots x boards x players x phases (budget 300 ms, in-process)');
@@ -221,13 +285,15 @@ for (const bot of RESEARCH_BOTS) {
     console.log(`      ${elapsed.toFixed(0)} ms  ${r.reasoning.slice(0, 150)}`);
   });
 }
-await test('5000 ms budget (maximum) still returns under the 5000 ms ceiling', async () => {
-  const t = performance.now();
-  const r = await chooseAiTurn(heavy, 'research:arrow-lsg', { botBudgetMs: 5000 });
-  const elapsed = performance.now() - t;
-  assert(!r.fallback, `fell back: ${r.reasoning}`);
-  assert(elapsed < HARD_CEILING_MS, `took ${elapsed.toFixed(0)} ms`);
-});
+for (const id of ['research:arrow-lsg', 'research:campya-liberty-mc', 'research:guo-phased-uct']) {
+  await test(`${id}: 5000 ms budget (maximum) still returns under the 5000 ms ceiling`, async () => {
+    const t = performance.now();
+    const r = await chooseAiTurn(heavy, id, { botBudgetMs: 5000 });
+    const elapsed = performance.now() - t;
+    assert(!r.fallback, `fell back: ${r.reasoning}`);
+    assert(elapsed < HARD_CEILING_MS, `took ${elapsed.toFixed(0)} ms`);
+  });
+}
 
 console.log('\ncomplete matches (6x6, budget 120 ms)');
 for (const [a, b] of [
@@ -235,6 +301,8 @@ for (const [a, b] of [
   ['research:cgt-subgame', 'research:amazong-guard'],
   ['research:tas-move-cat', 'research:arrow-lsg'],
   ['research:tds-endgame', 'research:anky-rel-territory'],
+  ['research:campya-liberty-mc', 'research:guo-phased-uct'],
+  ['research:guo-phased-uct', 'research:arrow-lsg'],
 ] as const) {
   await test(`${a} vs ${b}: draft + battle to the end, every decision by the bots`, () => {
     let s = createGame({ boardSize: 6, playerCount: 2, piecesPerPlayer: 3, placementMode: 'MANUAL' });
@@ -249,6 +317,20 @@ for (const [a, b] of [
     assert(s.winner !== null, 'no winner');
   });
 }
+
+await test('campya + guo + mg-peo + arrow: 10x10 four-tribe match to the end (budget 80 ms)', () => {
+  const ids = ['research:campya-liberty-mc', 'research:guo-phased-uct', 'research:mg-peo-mcts', 'research:arrow-lsg'] as const;
+  let s = createGame({ boardSize: 10, playerCount: 4, piecesPerPlayer: 4, placementMode: 'MANUAL' });
+  let turns = 0;
+  while (s.status === 'PLAYING') {
+    const id = ids[slotOf(s.currentPlayer)]!;
+    const d = runResearchBot(s, id, 80);
+    assert(d.modelUsed === id, `fallback on turn ${turns}: ${d.reasoning}`);
+    s = d.kind === 'placement' ? placePiece(s, d.placement) : applyAction(s, d.move);
+    assert(++turns < 400, 'match did not end');
+  }
+  assert(s.winner !== null && s.eliminated.length === 3, 'no single winner');
+});
 
 await shutdownResearchWorkers();
 console.log(`\n${passed} passed, ${failures.length} failed`);
