@@ -40,5 +40,7 @@
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
+    // Allow `./x.ts` imports inside /shared (needed by Turbopack); rewritten to `.js` on emit.
+    "rewriteRelativeImportExtensions": true,
   }
 }

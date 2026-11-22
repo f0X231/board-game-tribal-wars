@@ -16,14 +16,20 @@ The project uses a Full-Stack TypeScript architecture divided into three directo
    - Players per match: **2, 3, or 4** (Human or AI).
    - Board size **6x6**: Each player selects **2 to 4 pieces**.
    - Board size **10x10** or **12x12**: Each player selects **4 to 6 pieces** (maximum 6 pieces per player).
-2. **Turn Sequence (3 Mandatory Steps)**:
+   - Tribes: `P1` = Aztec (crimson), `P2` = Maya (emerald), `P3` = Eagle (amber), `P4` = Big Bear (sapphire).
+2. **Totem Placement (Snake Draft) — `phase: 'PLACEMENT'`**:
+   - A match starts on an empty board. Players place **1 totem at a time** on any `EMPTY` square in **snake order** (forward, then reversed, alternating each round; e.g. 3 players: `P1 → P2 → P3 → P3 → P2 → P1 → ...`) until everyone has placed `piecesPerPlayer` totems.
+   - **First Mover Rule**: the player who placed the **very last totem** moves first when `phase` becomes `'PLAYING'`; play then proceeds clockwise (`P1 → P2 → P3 → P4`).
+   - `placementMode: 'RANDOM'` auto-completes the same snake draft on random empty squares (first-mover rule still applies). `'MANUAL'` is the default.
+   - No moves or arrows are allowed during placement; no placements are allowed after it.
+3. **Turn Sequence (3 Mandatory Steps) — `phase: 'PLAYING'`**:
    - **Step 1 - Move**: Select one of the player's pieces and move it any number of unobstructed squares orthogonally or diagonally (like a Chess Queen). Cannot jump over or land on other pieces or fire tiles.
    - **Step 2 - Leave Fire Trail**: The exact square the piece just vacated immediately ignites into a **permanent Fire tile**.
    - **Step 3 - Shoot Fire Arrow**: From the newly arrived destination square, shoot a fire arrow in any Queen direction (orthogonal/diagonal) any number of unobstructed squares. The arrow cannot pass through pieces or existing fire tiles. The square where the arrow stops becomes a **permanent Fire tile**.
-3. **Fire Mechanics**:
+4. **Fire Mechanics**:
    - All fire tiles (both from movement trails and fire arrows) are **permanent** until the match ends.
    - Fire tiles act as impassable obstacles for both movement and fire arrows. No player can ever step on or shoot through any fire tile.
-4. **Elimination & Win Condition**:
+5. **Elimination & Win Condition**:
    - A player is **eliminated** immediately if, at the start of their turn, none of their pieces can make a complete valid turn (must be able to both move AND shoot a fire arrow afterward).
    - The last remaining active player wins the match.
 
